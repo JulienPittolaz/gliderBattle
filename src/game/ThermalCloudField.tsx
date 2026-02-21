@@ -146,7 +146,7 @@ const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
     const topY = getThermalTopY(thermal)
     group.position.set(thermal.x, topY + THERMAL_CLOUD_TOP_OFFSET, thermal.z)
 
-    const now = performance.now() * 0.001
+    const now = Date.now() * 0.001
     const fadeIn = THREE.MathUtils.clamp(
       (now - thermalEntry.appearAt) / THERMAL_FADE_IN_SECONDS,
       0,

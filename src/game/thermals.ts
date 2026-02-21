@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import {
   SPAWN_BASE_XZ,
   SPAWN_MIN_GROUND_HEIGHT,
+  THERMAL_ACTIVATION_DELAY_MAX_SECONDS,
+  THERMAL_ACTIVATION_DELAY_MIN_SECONDS,
   THERMAL_BASE_Y,
   THERMAL_BASE_HEIGHT_MAX,
   THERMAL_BASE_HEIGHT_MIN,
@@ -24,6 +26,7 @@ import {
 export interface ThermalColumn {
   id: string
   sizeClass: 'small' | 'large'
+  activationAt: number
   groundY: number
   x: number
   z: number
@@ -109,6 +112,7 @@ export const generateThermals = (
   seed: number,
 ): ThermalColumn[] => {
   const rng = createRng(seed)
+  const batchNowSeconds = Date.now() * 0.001
   const thermals: ThermalColumn[] = []
   const CANDIDATES_PER_THERMAL = 64
   const FALLBACK_ATTEMPTS_PER_THERMAL = 120
@@ -208,6 +212,7 @@ export const generateThermals = (
     thermals.push({
       id: `thermal-${seed}-${thermals.length}`,
       sizeClass: candidate.isSmall ? 'small' : 'large',
+      activationAt: batchNowSeconds,
       groundY: THERMAL_BASE_Y,
       x: candidate.x,
       z: candidate.z,
@@ -221,6 +226,29 @@ export const generateThermals = (
       strength,
       phase: rng() * Math.PI * 2,
     })
+  }
+
+  const activationRange = Math.max(
+    THERMAL_ACTIVATION_DELAY_MAX_SECONDS - THERMAL_ACTIVATION_DELAY_MIN_SECONDS,
+    0,
+  )
+  if (activationRange > 0 && thermals.length > 0) {
+    const slotSize = activationRange / thermals.length
+    const ranked = thermals
+      .map((_, index) => ({ index, key: rng() }))
+      .sort((a, b) => a.key - b.key)
+
+    for (let rank = 0; rank < ranked.length; rank += 1) {
+      const { index } = ranked[rank]
+      const centerDelay = THERMAL_ACTIVATION_DELAY_MIN_SECONDS + (rank + 0.5) * slotSize
+      const jitter = (rng() - 0.5) * slotSize * 0.7
+      const delayed = THREE.MathUtils.clamp(
+        centerDelay + jitter,
+        THERMAL_ACTIVATION_DELAY_MIN_SECONDS,
+        THERMAL_ACTIVATION_DELAY_MAX_SECONDS,
+      )
+      thermals[index].activationAt = batchNowSeconds + delayed
+    }
   }
 
   return thermals

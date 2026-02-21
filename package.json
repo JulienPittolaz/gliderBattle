@@ -5,14 +5,18 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "node server/index.mjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@colyseus/schema": "^2.0.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@react-three/postprocessing": "^3.0.4",
+    "colyseus": "^0.15.26",
+    "colyseus.js": "^0.15.26",
     "leva": "^0.10.1",
     "postprocessing": "^6.38.3",
     "react": "^19.2.0",

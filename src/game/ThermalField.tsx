@@ -151,7 +151,7 @@ const ThermalVisual = ({ thermalEntry, shaderConfig, gameSpeed }: ThermalVisualP
       shaderMaterialRef.current.uniforms.uTime.value = clock.getElapsedTime()
     }
 
-    const now = performance.now() * 0.001
+    const now = Date.now() * 0.001
     const fadeIn = THREE.MathUtils.clamp(
       (now - thermalEntry.appearAt) / THERMAL_FADE_IN_SECONDS,
       0,

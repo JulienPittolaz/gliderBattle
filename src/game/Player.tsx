@@ -24,12 +24,14 @@ import { computeSafeSpawn } from './spawn'
 import type { ThermalColumn } from './thermals'
 import { getThermalLiftAtPoint } from './thermals'
 import { useKeyboard } from './useKeyboard'
+import type { LocalPoseMessage } from '../net/types'
 
 export interface PlayerProps {
   playerRef: RefObject<THREE.Group | null>
   terrainHeightAt?: (x: number, z: number) => number
   thermals?: ThermalColumn[]
   gameSpeed?: number
+  onPose?: (pose: LocalPoseMessage) => void
 }
 
 export const Player = ({
@@ -37,6 +39,7 @@ export const Player = ({
   terrainHeightAt,
   thermals = [],
   gameSpeed = 1,
+  onPose,
 }: PlayerProps) => {
   const WATER_SURFACE_Y = TERRAIN_WATER_LEVEL
   const WATER_RESPAWN_DEPTH = 0.25
@@ -98,8 +101,12 @@ export const Player = ({
     const sinkCap = THREE.MathUtils.lerp(1000, STORM_MAX_TOTAL_SINK, stormT)
     const totalSink = Math.min(uncappedSink, sinkCap)
     let thermalLift = 0
+    const nowSeconds = Date.now() * 0.001
 
     for (const thermal of thermals) {
+      if (nowSeconds < thermal.activationAt) {
+        continue
+      }
       thermalLift += getThermalLiftAtPoint(
         thermal,
         player.position.x,
@@ -130,6 +137,17 @@ export const Player = ({
     }
 
     player.rotation.set(0, yawRef.current, 0)
+
+    if (onPose) {
+      onPose({
+        x: player.position.x,
+        y: player.position.y,
+        z: player.position.z,
+        yaw: yawRef.current,
+        bank: bankRef.current,
+        speedbar: speedbarRef.current,
+      })
+    }
   })
 
   return (

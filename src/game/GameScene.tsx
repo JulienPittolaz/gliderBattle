@@ -10,6 +10,7 @@ import {
   TERRAIN_SIZE,
   TERRAIN_WATER_LEVEL,
   THERMAL_COUNT,
+  THERMAL_DESPAWN_DELAY_MAX_SECONDS,
   THERMAL_FADE_OUT_SECONDS,
   THERMAL_RESEED_SECONDS,
 } from './constants'
@@ -20,14 +21,25 @@ import { StormPostFX } from './StormPostFX'
 import { StormZoneEffects } from './StormZoneEffects'
 import { ThermalCloudField } from './ThermalCloudField'
 import { useThermalShaderDebug } from './ThermalShaderDebugPanel'
+import { useMultiplayerDebug } from './MultiplayerDebug'
 import { Player } from './Player'
+import { RemotePlayers } from './RemotePlayers'
 import { ThermalField } from './ThermalField'
 import { TerrainForest } from './TerrainForest'
 import { createProceduralIslandTerrain } from './terrain'
 import { generateThermals } from './thermals'
 import type { ThermalVisualEntry } from './thermals'
+import { useMultiplayerSession } from '../net/useMultiplayerSession'
 
 const SKY_RADIUS = 260
+const hashToUnit = (value: string) => {
+  let hash = 2166136261
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return (hash >>> 0) / 4294967295
+}
 
 const SkyDome = () => {
   const geometry = useMemo(() => {
@@ -66,10 +78,12 @@ export const GameScene = () => {
   const stormFactorRef = useRef(0)
   const terrain = useMemo(() => createProceduralIslandTerrain(), [])
   const gameSpeed = useGameSpeedDebug()
+  const multiplayerDebug = useMultiplayerDebug()
   const rainPostFxConfig = useRainPostFxDebug()
   const { shaderConfig } = useThermalShaderDebug()
+  const multiplayer = useMultiplayerSession()
   const [thermalSeedStep, setThermalSeedStep] = useState(0)
-  const thermals = useMemo(
+  const localThermals = useMemo(
     () =>
       generateThermals(
         THERMAL_COUNT,
@@ -79,18 +93,18 @@ export const GameScene = () => {
       ),
     [terrain, thermalSeedStep],
   )
+  const thermals = multiplayer.thermals ?? localThermals
   const [thermalVisuals, setThermalVisuals] = useState<ThermalVisualEntry[]>(() => {
-    const now = performance.now() * 0.001
     return thermals.map((thermal) => ({
       id: thermal.id,
       thermal,
-      appearAt: now,
+      appearAt: thermal.activationAt,
       disappearAt: null,
     }))
   })
 
   useEffect(() => {
-    const now = performance.now() * 0.001
+    const now = Date.now() * 0.001
 
     setThermalVisuals((previous) => {
       const previousById = new Map(previous.map((entry) => [entry.id, entry]))
@@ -107,7 +121,8 @@ export const GameScene = () => {
           }
 
           if (entry.disappearAt === null) {
-            return { ...entry, disappearAt: now }
+            const despawnDelay = hashToUnit(entry.id) * THERMAL_DESPAWN_DELAY_MAX_SECONDS
+            return { ...entry, disappearAt: now + despawnDelay }
           }
 
           return entry
@@ -122,7 +137,7 @@ export const GameScene = () => {
         .map((thermal) => ({
           id: thermal.id,
           thermal,
-          appearAt: now,
+          appearAt: thermal.activationAt,
           disappearAt: null,
         }))
 
@@ -132,7 +147,7 @@ export const GameScene = () => {
 
   useEffect(() => {
     const timer = window.setInterval(() => {
-      const now = performance.now() * 0.001
+      const now = Date.now() * 0.001
       setThermalVisuals((previous) =>
         previous.filter(
           (entry) =>
@@ -181,6 +196,13 @@ export const GameScene = () => {
         terrainHeightAt={terrain.getHeightAt}
         thermals={thermals}
         gameSpeed={gameSpeed}
+        onPose={multiplayer.setLocalPose}
+      />
+      <RemotePlayers
+        players={multiplayer.remotePlayers}
+        smoothingMode={multiplayerDebug.smoothingMode}
+        interpDelayMs={multiplayerDebug.interpDelayMs}
+        maxExtrapolationMs={multiplayerDebug.maxExtrapolationMs}
       />
       <FollowCamera targetRef={playerRef} gameSpeed={gameSpeed} />
       <ThermalField thermals={thermalVisuals} shaderConfig={shaderConfig} gameSpeed={gameSpeed} />
