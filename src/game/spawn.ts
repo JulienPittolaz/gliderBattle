@@ -1,15 +1,14 @@
 import * as THREE from 'three'
 import {
+  SPAWN_BEACH_MAX_GROUND_OFFSET,
   SPAWN_BASE_XZ,
-  SPAWN_FORWARD_CLEARANCE,
-  SPAWN_FORWARD_CLEAR_DISTANCE,
-  SPAWN_FORWARD_SAMPLES,
-  SPAWN_MIN_GROUND_HEIGHT,
   SPAWN_MIN_ABSOLUTE_Y,
+  SPAWN_MIN_GROUND_HEIGHT,
   SPAWN_POSITION,
-  SPAWN_SEARCH_RADIUS,
-  SPAWN_SEARCH_STEPS,
+  SPAWN_RING_MAX_ATTEMPTS,
+  SPAWN_RING_RADIUS,
   SPAWN_VERTICAL_MARGIN,
+  TERRAIN_WATER_LEVEL,
 } from './constants'
 
 export interface SafeSpawn {
@@ -17,62 +16,38 @@ export interface SafeSpawn {
   yaw: number
 }
 
-interface CandidateEval {
+interface SpawnCandidate {
+  x: number
+  z: number
   groundY: number
-  spawnY: number
-  minClearance: number
 }
 
-const evaluateCandidate = (
-  terrainHeightAt: (x: number, z: number) => number,
-  x: number,
-  z: number,
-): CandidateEval => {
+const candidateOnRing = (center: THREE.Vector2, angle: number, terrainHeightAt: (x: number, z: number) => number): SpawnCandidate => {
+  const x = center.x + Math.cos(angle) * SPAWN_RING_RADIUS
+  const z = center.y + Math.sin(angle) * SPAWN_RING_RADIUS
   const groundY = terrainHeightAt(x, z)
-  let spawnY = Math.max(groundY + SPAWN_VERTICAL_MARGIN, SPAWN_MIN_ABSOLUTE_Y)
-  let minClearance = Number.POSITIVE_INFINITY
-  let maxForwardGround = Number.NEGATIVE_INFINITY
-
-  for (let i = 1; i <= SPAWN_FORWARD_SAMPLES; i += 1) {
-    const distance = (i / SPAWN_FORWARD_SAMPLES) * SPAWN_FORWARD_CLEAR_DISTANCE
-    const sampleZ = z - distance
-    const ground = terrainHeightAt(x, sampleZ)
-    maxForwardGround = Math.max(maxForwardGround, ground)
-    minClearance = Math.min(minClearance, spawnY - ground)
-  }
-
-  if (minClearance < SPAWN_FORWARD_CLEARANCE) {
-    spawnY = Math.max(spawnY, maxForwardGround + SPAWN_FORWARD_CLEARANCE)
-    minClearance = Number.POSITIVE_INFINITY
-    for (let i = 1; i <= SPAWN_FORWARD_SAMPLES; i += 1) {
-      const distance = (i / SPAWN_FORWARD_SAMPLES) * SPAWN_FORWARD_CLEAR_DISTANCE
-      const sampleZ = z - distance
-      const ground = terrainHeightAt(x, sampleZ)
-      minClearance = Math.min(minClearance, spawnY - ground)
-    }
-  }
-
-  return { groundY, spawnY, minClearance }
+  return { x, z, groundY }
 }
 
-const ringCandidates = (center: THREE.Vector2) => {
-  const candidates: THREE.Vector2[] = [center.clone()]
-  const angleSamples = 16
+const isValidCandidate = (candidate: SpawnCandidate) =>
+  candidate.groundY >= SPAWN_MIN_GROUND_HEIGHT &&
+  candidate.groundY <= TERRAIN_WATER_LEVEL + SPAWN_BEACH_MAX_GROUND_OFFSET
 
-  for (let step = 1; step <= SPAWN_SEARCH_STEPS; step += 1) {
-    const radius = (step / SPAWN_SEARCH_STEPS) * SPAWN_SEARCH_RADIUS
-    for (let a = 0; a < angleSamples; a += 1) {
-      const theta = (a / angleSamples) * Math.PI * 2
-      candidates.push(
-        new THREE.Vector2(
-          center.x + Math.cos(theta) * radius,
-          center.y + Math.sin(theta) * radius,
-        ),
-      )
-    }
+const yawTowardCenter = (center: THREE.Vector2, x: number, z: number) => {
+  const toCenter = new THREE.Vector2(center.x - x, center.y - z)
+  if (toCenter.lengthSq() <= Number.EPSILON) {
+    return 0
   }
+  toCenter.normalize()
+  return Math.atan2(-toCenter.x, -toCenter.y)
+}
 
-  return candidates
+const safeSpawnFromCandidate = (center: THREE.Vector2, candidate: SpawnCandidate): SafeSpawn => {
+  const spawnY = Math.max(candidate.groundY + SPAWN_VERTICAL_MARGIN, SPAWN_MIN_ABSOLUTE_Y)
+  return {
+    position: new THREE.Vector3(candidate.x, spawnY, candidate.z),
+    yaw: yawTowardCenter(center, candidate.x, candidate.z),
+  }
 }
 
 export const computeSafeSpawn = (
@@ -86,67 +61,29 @@ export const computeSafeSpawn = (
     }
   }
 
-  const candidates = ringCandidates(preferredXZ)
-  let bestValid: { x: number; z: number; spawnY: number; groundY: number } | null = null
-  let bestFallback: {
-    x: number
-    z: number
-    spawnY: number
-    groundY: number
-    minClearance: number
-  } | null = null
+  const sampledCandidates: SpawnCandidate[] = []
 
-  for (const candidate of candidates) {
-    const { groundY, spawnY, minClearance } = evaluateCandidate(
-      terrainHeightAt,
-      candidate.x,
-      candidate.y,
-    )
-
-    if (groundY < SPAWN_MIN_GROUND_HEIGHT) {
-      continue
-    }
-
-    if (minClearance >= SPAWN_FORWARD_CLEARANCE) {
-      if (!bestValid || groundY > bestValid.groundY) {
-        bestValid = {
-          x: candidate.x,
-          z: candidate.y,
-          spawnY,
-          groundY,
-        }
-      }
-      continue
-    }
-
-    if (
-      !bestFallback ||
-      groundY > bestFallback.groundY ||
-      (groundY === bestFallback.groundY && minClearance > bestFallback.minClearance)
-    ) {
-      bestFallback = {
-        x: candidate.x,
-        z: candidate.y,
-        spawnY,
-        groundY,
-        minClearance,
-      }
+  for (let i = 0; i < SPAWN_RING_MAX_ATTEMPTS; i += 1) {
+    const angle = Math.random() * Math.PI * 2
+    const candidate = candidateOnRing(preferredXZ, angle, terrainHeightAt)
+    sampledCandidates.push(candidate)
+    if (isValidCandidate(candidate)) {
+      return safeSpawnFromCandidate(preferredXZ, candidate)
     }
   }
 
-  if (bestValid) {
-    return {
-      position: new THREE.Vector3(bestValid.x, bestValid.spawnY, bestValid.z),
-      yaw: 0,
+  for (let i = 0; i < 72; i += 1) {
+    const angle = Math.random() * Math.PI * 2
+    const candidate = candidateOnRing(preferredXZ, angle, terrainHeightAt)
+    sampledCandidates.push(candidate)
+    if (isValidCandidate(candidate)) {
+      return safeSpawnFromCandidate(preferredXZ, candidate)
     }
   }
 
-  if (bestFallback) {
-    const boostedY = bestFallback.spawnY + (SPAWN_FORWARD_CLEARANCE - bestFallback.minClearance)
-    return {
-      position: new THREE.Vector3(bestFallback.x, boostedY, bestFallback.z),
-      yaw: 0,
-    }
+  if (sampledCandidates.length > 0) {
+    const randomFallback = sampledCandidates[Math.floor(Math.random() * sampledCandidates.length)]
+    return safeSpawnFromCandidate(preferredXZ, randomFallback)
   }
 
   return {

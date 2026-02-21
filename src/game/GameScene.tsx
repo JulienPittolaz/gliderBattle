@@ -6,8 +6,9 @@ import {
   FOG_NEAR,
   SKY_HORIZON_COLOR,
   SKY_TOP_COLOR,
-  TERRAIN_HEIGHT_BASE,
+  TERRAIN_INLAND_LAKE_WATER_COLOR,
   TERRAIN_SIZE,
+  TERRAIN_WATER_LEVEL,
   THERMAL_COUNT,
   THERMAL_FADE_OUT_SECONDS,
   THERMAL_RESEED_SECONDS,
@@ -21,6 +22,7 @@ import { ThermalCloudField } from './ThermalCloudField'
 import { useThermalShaderDebug } from './ThermalShaderDebugPanel'
 import { Player } from './Player'
 import { ThermalField } from './ThermalField'
+import { TerrainForest } from './TerrainForest'
 import { createProceduralIslandTerrain } from './terrain'
 import { generateThermals } from './thermals'
 import type { ThermalVisualEntry } from './thermals'
@@ -185,12 +187,32 @@ export const GameScene = () => {
       <ThermalCloudField thermals={thermalVisuals} />
 
       <mesh geometry={terrain.geometry} receiveShadow>
-        <meshStandardMaterial color="#5f7d5d" roughness={0.95} metalness={0.02} flatShading />
+        <meshStandardMaterial vertexColors roughness={0.95} metalness={0.02} flatShading />
       </mesh>
+      <TerrainForest instances={terrain.forestInstances} />
+      {terrain.inlandLake ? (
+        <>
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            position={[terrain.inlandLake.x, terrain.inlandLake.waterY + 0.02, terrain.inlandLake.z]}
+            scale={[1.08, 1, 0.92]}
+            receiveShadow
+          >
+            <circleGeometry args={[terrain.inlandLake.radius, 40]} />
+            <meshStandardMaterial
+              color={TERRAIN_INLAND_LAKE_WATER_COLOR}
+              roughness={0.38}
+              metalness={0.04}
+              transparent
+              opacity={0.92}
+            />
+          </mesh>
+        </>
+      ) : null}
 
       <mesh
         rotation={[-Math.PI / 2, 0, 0]}
-        position={[0, TERRAIN_HEIGHT_BASE - 1.8, 0]}
+        position={[0, TERRAIN_WATER_LEVEL, 0]}
         receiveShadow
       >
         <circleGeometry args={[TERRAIN_SIZE * 0.9, 96]} />

@@ -31,6 +31,7 @@ interface CloudPart {
   offset: THREE.Vector3
   rotation: THREE.Euler
   scale: number
+  stretch: THREE.Vector3
 }
 
 const createRng = (seed: number) => {
@@ -86,6 +87,11 @@ const makeCloudParts = (thermal: ThermalColumn): CloudPart[] => {
       ),
       rotation: new THREE.Euler(tilt, yaw, roll),
       scale: baseScale * (0.65 + rng() * 0.7),
+      stretch: new THREE.Vector3(
+        0.82 + rng() * 0.4,
+        0.8 + rng() * 0.35,
+        0.82 + rng() * 0.4,
+      ),
     }
   })
 
@@ -114,6 +120,11 @@ const makeCloudParts = (thermal: ThermalColumn): CloudPart[] => {
           (rng() - 0.5) * 0.85,
         ),
         scale: baseScale * (0.55 + rng() * 0.45),
+        stretch: new THREE.Vector3(
+          0.78 + rng() * 0.35,
+          0.76 + rng() * 0.3,
+          0.78 + rng() * 0.35,
+        ),
       })
     }
   }
@@ -170,10 +181,13 @@ const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
           key={`${thermal.id}-cloud-part-${index}`}
           position={part.offset}
           rotation={part.rotation}
+          scale={part.stretch}
         >
           <icosahedronGeometry args={[part.scale, 0]} />
           <meshStandardMaterial
             color={THERMAL_CLOUD_COLOR}
+            emissive="#ffffff"
+            emissiveIntensity={0.08}
             roughness={0.95}
             metalness={0}
             flatShading

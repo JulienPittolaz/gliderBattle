@@ -12,11 +12,11 @@ import {
   SINK_RATE,
   SPEEDBAR_BOOST,
   SPEEDBAR_SINK_BOOST,
-  TERRAIN_HEIGHT_BASE,
   STORM_MAX_TOTAL_SINK,
   STORM_START_RATIO,
   TERRAIN_ISLAND_RADIUS,
   TERRAIN_SIZE,
+  TERRAIN_WATER_LEVEL,
   YAW_RATE,
 } from './constants'
 import { ParagliderModel } from './ParagliderModel'
@@ -38,7 +38,7 @@ export const Player = ({
   thermals = [],
   gameSpeed = 1,
 }: PlayerProps) => {
-  const WATER_SURFACE_Y = TERRAIN_HEIGHT_BASE - 1.8
+  const WATER_SURFACE_Y = TERRAIN_WATER_LEVEL
   const WATER_RESPAWN_DEPTH = 0.25
   const input = useKeyboard()
   const direction = useMemo(() => new THREE.Vector3(), [])
