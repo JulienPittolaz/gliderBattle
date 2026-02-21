@@ -1,0 +1,87 @@
+import * as THREE from 'three'
+
+export const SPAWN_POSITION = new THREE.Vector3(0, 6, 0)
+export const SPAWN_BASE_XZ = new THREE.Vector2(0, 0)
+export const SPAWN_VERTICAL_MARGIN = 8
+export const SPAWN_MIN_ABSOLUTE_Y = 14
+export const SPAWN_FORWARD_CLEAR_DISTANCE = 28
+export const SPAWN_FORWARD_SAMPLES = 6
+export const SPAWN_FORWARD_CLEARANCE = 5
+export const SPAWN_SEARCH_RADIUS = 70
+export const SPAWN_SEARCH_STEPS = 5
+export const SPAWN_MIN_GROUND_HEIGHT = -2
+export const MIN_ALTITUDE = 1.2
+export const PLAYER_CLEARANCE = 0.35
+
+export const FORWARD_SPEED = 6
+export const SPEEDBAR_BOOST = 1
+export const SINK_RATE = 0.45
+export const SPEEDBAR_SINK_BOOST = 1.4
+export const YAW_RATE = 1.8
+
+export const LOOK_OFFSET = new THREE.Vector3(0, 0.6, 0)
+export const CAMERA_OFFSET = new THREE.Vector3(0, 3.2, 10.5)
+export const CAMERA_POSITION_LERP = 4.5
+export const CAMERA_TARGET_LERP = 6
+
+export const SKY_TOP_COLOR = '#3f7fd9'
+export const SKY_HORIZON_COLOR = '#9fd2ff'
+export const FOG_COLOR = '#8abdf0'
+export const FOG_NEAR = 70
+export const FOG_FAR = 320
+
+export const TERRAIN_SEED = 1337
+export const TERRAIN_SIZE = 220
+export const TERRAIN_SEGMENTS = 180
+export const TERRAIN_ISLAND_RADIUS = 95
+export const TERRAIN_HEIGHT_BASE = -5
+export const TERRAIN_MAX_HEIGHT = 34
+export const TERRAIN_NOISE_SCALE = 0.028
+
+export const THERMAL_COUNT = 10
+export const THERMAL_RESEED_SECONDS = 18
+export const THERMAL_BASE_Y = 0
+export const THERMAL_SMALL_RATIO = 0.7
+export const THERMAL_SMALL_RADIUS_MIN = 5
+export const THERMAL_SMALL_RADIUS_MAX = 8
+export const THERMAL_LARGE_RADIUS_MIN = 12
+export const THERMAL_LARGE_RADIUS_MAX = 20
+export const THERMAL_BASE_HEIGHT_MIN = 26
+export const THERMAL_BASE_HEIGHT_MAX = 42
+export const THERMAL_HEIGHT_AMPLITUDE_MIN = 8
+export const THERMAL_HEIGHT_AMPLITUDE_MAX = 16
+export const THERMAL_SMALL_STRENGTH_MIN = 11.0
+export const THERMAL_SMALL_STRENGTH_MAX = 15.0
+export const THERMAL_LARGE_STRENGTH_MIN = 8.0
+export const THERMAL_LARGE_STRENGTH_MAX = 12.0
+export const THERMAL_EDGE_MARGIN = 0
+export const THERMAL_MIN_GAP = 8
+export const THERMAL_VISUAL_OPACITY = 0.22
+export const THERMAL_SPAWN_EXCLUSION_RADIUS = 18
+export const THERMAL_CLOUD_TOP_OFFSET = 2
+export const THERMAL_CLOUD_SCALE_SMALL_MIN = 1.4
+export const THERMAL_CLOUD_SCALE_SMALL_MAX = 2.3
+export const THERMAL_CLOUD_SCALE_LARGE_MIN = 2.4
+export const THERMAL_CLOUD_SCALE_LARGE_MAX = 3.8
+export const THERMAL_CLOUD_COLOR = '#f4f8ff'
+export const THERMAL_CLOUD_COVERAGE_RATIO = 0.95
+export const THERMAL_CLOUD_INNER_RATIO = 0.15
+export const THERMAL_CLOUD_PARTS_MIN = 18
+export const THERMAL_CLOUD_PARTS_MAX = 56
+export const THERMAL_CLOUD_PART_BASE_AREA = 70
+
+export const THERMAL_SHADER_OPACITY_BASE = 0.18
+export const THERMAL_SHADER_SPEED_MIN = 0.45
+export const THERMAL_SHADER_SPEED_MAX = 1.35
+export const THERMAL_SHADER_NOISE_SCALE = 4.2
+export const THERMAL_SHADER_EDGE_SOFTNESS = 0.22
+export const THERMAL_SHADER_COLOR_LOW = '#7ad7ff'
+export const THERMAL_SHADER_COLOR_HIGH = '#f3fbff'
+export const THERMAL_SHADER_BAND_COUNT = 8
+export const THERMAL_SHADER_FLOW_DIRECTION = -1
+export const THERMAL_SHADER_ASCENT_BOOST = 1.35
+
+export const EDGE_SINK_START_RATIO = 0.5
+export const EDGE_SINK_MAX = 8.0
+export const EDGE_SINK_CURVE_EXP = 1.6
+export const STORM_START_RATIO = 0.25
