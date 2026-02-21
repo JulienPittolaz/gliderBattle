@@ -2,6 +2,8 @@ import { useFrame } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import {
+  THERMAL_FADE_IN_SECONDS,
+  THERMAL_FADE_OUT_SECONDS,
   THERMAL_CLOUD_COVERAGE_RATIO,
   THERMAL_CLOUD_COLOR,
   THERMAL_CLOUD_INNER_RATIO,
@@ -14,15 +16,15 @@ import {
   THERMAL_CLOUD_SCALE_SMALL_MIN,
   THERMAL_CLOUD_TOP_OFFSET,
 } from './constants'
-import type { ThermalColumn } from './thermals'
+import type { ThermalColumn, ThermalVisualEntry } from './thermals'
 import { getThermalTopY } from './thermals'
 
 interface ThermalCloudFieldProps {
-  thermals: ThermalColumn[]
+  thermals: ThermalVisualEntry[]
 }
 
 interface ThermalCloudProps {
-  thermal: ThermalColumn
+  thermalEntry: ThermalVisualEntry
 }
 
 interface CloudPart {
@@ -119,8 +121,9 @@ const makeCloudParts = (thermal: ThermalColumn): CloudPart[] => {
   return parts
 }
 
-const ThermalCloud = ({ thermal }: ThermalCloudProps) => {
+const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
   const groupRef = useRef<THREE.Group>(null)
+  const thermal = thermalEntry.thermal
   const parts = useMemo(() => makeCloudParts(thermal), [thermal])
 
   useFrame(() => {
@@ -131,6 +134,33 @@ const ThermalCloud = ({ thermal }: ThermalCloudProps) => {
 
     const topY = getThermalTopY(thermal)
     group.position.set(thermal.x, topY + THERMAL_CLOUD_TOP_OFFSET, thermal.z)
+
+    const now = performance.now() * 0.001
+    const fadeIn = THREE.MathUtils.clamp(
+      (now - thermalEntry.appearAt) / THERMAL_FADE_IN_SECONDS,
+      0,
+      1,
+    )
+    const fadeOut =
+      thermalEntry.disappearAt === null
+        ? 1
+        : 1 -
+          THREE.MathUtils.clamp(
+            (now - thermalEntry.disappearAt) / THERMAL_FADE_OUT_SECONDS,
+            0,
+            1,
+          )
+    group.visible = fadeIn > 0.001 && fadeOut > 0.001
+    group.traverse((obj) => {
+      const mesh = obj as THREE.Mesh
+      if (!mesh.isMesh) {
+        return
+      }
+      const material = mesh.material as THREE.MeshStandardMaterial
+      material.transparent = true
+      material.opacity = Math.min(fadeIn, fadeOut)
+      material.depthWrite = material.opacity >= 0.98
+    })
   })
 
   return (
@@ -156,8 +186,8 @@ const ThermalCloud = ({ thermal }: ThermalCloudProps) => {
 
 export const ThermalCloudField = ({ thermals }: ThermalCloudFieldProps) => (
   <>
-    {thermals.map((thermal) => (
-      <ThermalCloud key={`${thermal.id}-cloud`} thermal={thermal} />
+    {thermals.map((thermalEntry) => (
+      <ThermalCloud key={`${thermalEntry.id}-cloud`} thermalEntry={thermalEntry} />
     ))}
   </>
 )

@@ -9,10 +9,13 @@ import {
   TERRAIN_HEIGHT_BASE,
   TERRAIN_SIZE,
   THERMAL_COUNT,
+  THERMAL_FADE_OUT_SECONDS,
   THERMAL_RESEED_SECONDS,
 } from './constants'
 import { FollowCamera } from './FollowCamera'
 import { useGameSpeedDebug } from './GameSpeedDebug'
+import { useRainPostFxDebug } from './RainPostFxDebug'
+import { StormPostFX } from './StormPostFX'
 import { StormZoneEffects } from './StormZoneEffects'
 import { ThermalCloudField } from './ThermalCloudField'
 import { useThermalShaderDebug } from './ThermalShaderDebugPanel'
@@ -20,6 +23,7 @@ import { Player } from './Player'
 import { ThermalField } from './ThermalField'
 import { createProceduralIslandTerrain } from './terrain'
 import { generateThermals } from './thermals'
+import type { ThermalVisualEntry } from './thermals'
 
 const SKY_RADIUS = 260
 
@@ -57,8 +61,10 @@ export const GameScene = () => {
   const ambientLightRef = useRef<THREE.AmbientLight>(null)
   const sunLightRef = useRef<THREE.DirectionalLight>(null)
   const fillLightRef = useRef<THREE.DirectionalLight>(null)
+  const stormFactorRef = useRef(0)
   const terrain = useMemo(() => createProceduralIslandTerrain(), [])
   const gameSpeed = useGameSpeedDebug()
+  const rainPostFxConfig = useRainPostFxDebug()
   const { shaderConfig } = useThermalShaderDebug()
   const [thermalSeedStep, setThermalSeedStep] = useState(0)
   const thermals = useMemo(
@@ -71,6 +77,70 @@ export const GameScene = () => {
       ),
     [terrain, thermalSeedStep],
   )
+  const [thermalVisuals, setThermalVisuals] = useState<ThermalVisualEntry[]>(() => {
+    const now = performance.now() * 0.001
+    return thermals.map((thermal) => ({
+      id: thermal.id,
+      thermal,
+      appearAt: now,
+      disappearAt: null,
+    }))
+  })
+
+  useEffect(() => {
+    const now = performance.now() * 0.001
+
+    setThermalVisuals((previous) => {
+      const previousById = new Map(previous.map((entry) => [entry.id, entry]))
+      const thermalById = new Map(thermals.map((thermal) => [thermal.id, thermal]))
+      const nextIds = new Set(thermals.map((thermal) => thermal.id))
+
+      const persistedOrFading = previous
+        .map((entry) => {
+          if (nextIds.has(entry.id)) {
+            return {
+              ...entry,
+              thermal: thermalById.get(entry.id) ?? entry.thermal,
+            }
+          }
+
+          if (entry.disappearAt === null) {
+            return { ...entry, disappearAt: now }
+          }
+
+          return entry
+        })
+        .filter(
+          (entry) =>
+            entry.disappearAt === null || now - entry.disappearAt <= THERMAL_FADE_OUT_SECONDS,
+        )
+
+      const newEntries = thermals
+        .filter((thermal) => !previousById.has(thermal.id))
+        .map((thermal) => ({
+          id: thermal.id,
+          thermal,
+          appearAt: now,
+          disappearAt: null,
+        }))
+
+      return [...persistedOrFading, ...newEntries]
+    })
+  }, [thermals])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const now = performance.now() * 0.001
+      setThermalVisuals((previous) =>
+        previous.filter(
+          (entry) =>
+            entry.disappearAt === null || now - entry.disappearAt <= THERMAL_FADE_OUT_SECONDS,
+        ),
+      )
+    }, 400)
+
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -95,7 +165,14 @@ export const GameScene = () => {
         ambientLightRef={ambientLightRef}
         sunLightRef={sunLightRef}
         fillLightRef={fillLightRef}
+        stormFactorRef={stormFactorRef}
+        rain3DMultiplier={
+          rainPostFxConfig.enabled
+            ? THREE.MathUtils.clamp(rainPostFxConfig.mix3DRain, 0, 0.3)
+            : 1
+        }
       />
+      <StormPostFX stormFactorRef={stormFactorRef} config={rainPostFxConfig} />
 
       <Player
         playerRef={playerRef}
@@ -104,8 +181,8 @@ export const GameScene = () => {
         gameSpeed={gameSpeed}
       />
       <FollowCamera targetRef={playerRef} gameSpeed={gameSpeed} />
-      <ThermalField thermals={thermals} shaderConfig={shaderConfig} gameSpeed={gameSpeed} />
-      <ThermalCloudField thermals={thermals} />
+      <ThermalField thermals={thermalVisuals} shaderConfig={shaderConfig} gameSpeed={gameSpeed} />
+      <ThermalCloudField thermals={thermalVisuals} />
 
       <mesh geometry={terrain.geometry} receiveShadow>
         <meshStandardMaterial color="#5f7d5d" roughness={0.95} metalness={0.02} flatShading />

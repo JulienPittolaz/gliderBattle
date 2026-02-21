@@ -1,6 +1,6 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useMemo, useRef } from 'react'
-import type { RefObject } from 'react'
+import type { MutableRefObject, RefObject } from 'react'
 import * as THREE from 'three'
 import {
   FOG_FAR,
@@ -17,6 +17,8 @@ interface StormZoneEffectsProps {
   ambientLightRef: RefObject<THREE.AmbientLight | null>
   sunLightRef: RefObject<THREE.DirectionalLight | null>
   fillLightRef: RefObject<THREE.DirectionalLight | null>
+  stormFactorRef?: MutableRefObject<number>
+  rain3DMultiplier?: number
 }
 
 const STORM_SKY_RADIUS = 260
@@ -83,6 +85,8 @@ export const StormZoneEffects = ({
   ambientLightRef,
   sunLightRef,
   fillLightRef,
+  stormFactorRef,
+  rain3DMultiplier = 1,
 }: StormZoneEffectsProps) => {
   const { gl } = useThree()
   const useShaderRain = !(gl as { isWebGPURenderer?: boolean }).isWebGPURenderer
@@ -95,7 +99,7 @@ export const StormZoneEffects = ({
   const rainMaterialRef = useRef<THREE.ShaderMaterial>(null)
   const rainLineMaterialRef = useRef<THREE.LineBasicMaterial>(null)
 
-  const stormFactorRef = useRef(0)
+  const stormLerpRef = useRef(0)
   const flashTimeRef = useRef(0)
   const flashDurationRef = useRef(0)
   const flashPeakRef = useRef(0)
@@ -165,14 +169,17 @@ export const StormZoneEffects = ({
       0,
       1,
     )
-    stormFactorRef.current = THREE.MathUtils.lerp(
-      stormFactorRef.current,
+    stormLerpRef.current = THREE.MathUtils.lerp(
+      stormLerpRef.current,
       zoneFactor,
       1 - Math.exp(-3.6 * delta),
     )
-    const storm = stormFactorRef.current
+    const storm = stormLerpRef.current
+    if (stormFactorRef) {
+      stormFactorRef.current = storm
+    }
     const stormVisual = zoneFactor > 0 ? Math.max(Math.sqrt(storm), 0.25) : 0
-    const rainCountFactor = THREE.MathUtils.clamp(storm, 0, 1)
+    const rainCountFactor = THREE.MathUtils.clamp(storm * rain3DMultiplier, 0, 1)
     const visibleDrops = Math.floor(RAIN_PARTICLE_COUNT * rainCountFactor)
 
     if (fogRef.current) {
@@ -227,22 +234,28 @@ export const StormZoneEffects = ({
     if (rainPointsRef.current) {
       rainPointsRef.current.position.copy(target.position)
       rainPointsRef.current.position.y = waterLevel
-      rainPointsRef.current.geometry.setDrawRange(0, visibleDrops)
+      rainPointsRef.current.visible = visibleDrops > 0
+      if (visibleDrops > 0) {
+        rainPointsRef.current.geometry.setDrawRange(0, visibleDrops)
+      }
     }
     if (rainLinesRef.current) {
       rainLinesRef.current.position.copy(target.position)
       rainLinesRef.current.position.y = waterLevel
-      rainLinesRef.current.geometry.setDrawRange(0, visibleDrops * 2)
+      rainLinesRef.current.visible = visibleDrops > 0
+      if (visibleDrops > 0) {
+        rainLinesRef.current.geometry.setDrawRange(0, visibleDrops * 2)
+      }
     }
     if (useShaderRain && rainMaterialRef.current) {
-      rainMaterialRef.current.uniforms.uOpacity.value = stormVisual * 0.9
+      rainMaterialRef.current.uniforms.uOpacity.value = stormVisual * 0.9 * rain3DMultiplier
       rainMaterialRef.current.uniforms.uIntensity.value = stormVisual
       rainMaterialRef.current.uniforms.uSize.value = THREE.MathUtils.lerp(11, 16, stormVisual)
       rainMaterialRef.current.uniforms.uWidth.value = THREE.MathUtils.lerp(0.12, 0.08, stormVisual)
       rainMaterialRef.current.uniforms.uLength.value = THREE.MathUtils.lerp(0.82, 0.95, stormVisual)
     }
     if (!useShaderRain && rainLineMaterialRef.current) {
-      rainLineMaterialRef.current.opacity = stormVisual * 0.95
+      rainLineMaterialRef.current.opacity = stormVisual * 0.95 * rain3DMultiplier
     }
 
     const positions = rainPositionsRef.current

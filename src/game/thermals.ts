@@ -34,6 +34,13 @@ export interface ThermalColumn {
   phase: number
 }
 
+export interface ThermalVisualEntry {
+  id: string
+  thermal: ThermalColumn
+  appearAt: number
+  disappearAt: number | null
+}
+
 const createRng = (seed: number) => {
   let t = seed >>> 0
   return () => {
@@ -103,50 +110,108 @@ export const generateThermals = (
 ): ThermalColumn[] => {
   const rng = createRng(seed)
   const thermals: ThermalColumn[] = []
-  const maxAttempts = count * 80
-  let attempts = 0
+  const CANDIDATES_PER_THERMAL = 64
+  const FALLBACK_ATTEMPTS_PER_THERMAL = 120
 
-  while (thermals.length < count && attempts < maxAttempts) {
-    attempts += 1
+  while (thermals.length < count) {
+    let bestCandidate: { x: number; z: number; radius: number; isSmall: boolean; score: number } | null = null
 
-    const theta = rng() * Math.PI * 2
-    const maxRadius = Math.max(islandRadius - THERMAL_EDGE_MARGIN, 10)
-    const radiusFromCenter = Math.sqrt(rng()) * maxRadius
-    const x = Math.cos(theta) * radiusFromCenter
-    const z = Math.sin(theta) * radiusFromCenter
+    for (let i = 0; i < CANDIDATES_PER_THERMAL; i += 1) {
+      const theta = rng() * Math.PI * 2
+      const maxRadius = Math.max(islandRadius - THERMAL_EDGE_MARGIN, 10)
+      const radiusFromCenter = Math.sqrt(rng()) * maxRadius
+      const x = Math.cos(theta) * radiusFromCenter
+      const z = Math.sin(theta) * radiusFromCenter
 
-    if (Math.hypot(x - SPAWN_BASE_XZ.x, z - SPAWN_BASE_XZ.y) < THERMAL_SPAWN_EXCLUSION_RADIUS) {
-      continue
+      if (Math.hypot(x - SPAWN_BASE_XZ.x, z - SPAWN_BASE_XZ.y) < THERMAL_SPAWN_EXCLUSION_RADIUS) {
+        continue
+      }
+
+      const terrainY = terrainHeightAt(x, z)
+      if (terrainY < SPAWN_MIN_GROUND_HEIGHT) {
+        continue
+      }
+
+      const isSmall = rng() < THERMAL_SMALL_RATIO
+      const radius = isSmall
+        ? randomInRange(rng, THERMAL_SMALL_RADIUS_MIN, THERMAL_SMALL_RADIUS_MAX)
+        : randomInRange(rng, THERMAL_LARGE_RADIUS_MIN, THERMAL_LARGE_RADIUS_MAX)
+
+      let minClearance = Infinity
+      let overlapsExisting = false
+      for (const existing of thermals) {
+        const centerDistance = Math.hypot(existing.x - x, existing.z - z)
+        const clearance = centerDistance - (existing.radius + radius + THERMAL_MIN_GAP)
+        minClearance = Math.min(minClearance, clearance)
+        if (clearance < 0) {
+          overlapsExisting = true
+          break
+        }
+      }
+      if (overlapsExisting) {
+        continue
+      }
+
+      const edgeBias = radiusFromCenter / maxRadius
+      const spreadScore = Number.isFinite(minClearance) ? minClearance : maxRadius * 0.5
+      const score = spreadScore + edgeBias * 6
+
+      if (!bestCandidate || score > bestCandidate.score) {
+        bestCandidate = { x, z, radius, isSmall, score }
+      }
     }
 
-    const terrainY = terrainHeightAt(x, z)
-    if (terrainY < SPAWN_MIN_GROUND_HEIGHT) {
-      continue
+    if (!bestCandidate) {
+      // If the layout is saturated, try random fallback positions for this slot.
+      let placed = false
+      for (let attempt = 0; attempt < FALLBACK_ATTEMPTS_PER_THERMAL; attempt += 1) {
+        const theta = rng() * Math.PI * 2
+        const maxRadius = Math.max(islandRadius - THERMAL_EDGE_MARGIN, 10)
+        const radiusFromCenter = Math.sqrt(rng()) * maxRadius
+        const x = Math.cos(theta) * radiusFromCenter
+        const z = Math.sin(theta) * radiusFromCenter
+        if (Math.hypot(x - SPAWN_BASE_XZ.x, z - SPAWN_BASE_XZ.y) < THERMAL_SPAWN_EXCLUSION_RADIUS) {
+          continue
+        }
+        if (terrainHeightAt(x, z) < SPAWN_MIN_GROUND_HEIGHT) {
+          continue
+        }
+        const isSmall = rng() < THERMAL_SMALL_RATIO
+        const radius = isSmall
+          ? randomInRange(rng, THERMAL_SMALL_RADIUS_MIN, THERMAL_SMALL_RADIUS_MAX)
+          : randomInRange(rng, THERMAL_LARGE_RADIUS_MIN, THERMAL_LARGE_RADIUS_MAX)
+        const overlapsExisting = thermals.some((existing) => {
+          const centerDistance = Math.hypot(existing.x - x, existing.z - z)
+          return centerDistance < existing.radius + radius + THERMAL_MIN_GAP
+        })
+        if (overlapsExisting) {
+          continue
+        }
+        bestCandidate = { x, z, radius, isSmall, score: 0 }
+        placed = true
+        break
+      }
+      if (!placed) {
+        break
+      }
     }
 
-    const isSmall = rng() < THERMAL_SMALL_RATIO
-    const radius = isSmall
-      ? randomInRange(rng, THERMAL_SMALL_RADIUS_MIN, THERMAL_SMALL_RADIUS_MAX)
-      : randomInRange(rng, THERMAL_LARGE_RADIUS_MIN, THERMAL_LARGE_RADIUS_MAX)
-    const strength = isSmall
+    const candidate = bestCandidate
+    if (!candidate) {
+      break
+    }
+
+    const strength = candidate.isSmall
       ? randomInRange(rng, THERMAL_SMALL_STRENGTH_MIN, THERMAL_SMALL_STRENGTH_MAX)
       : randomInRange(rng, THERMAL_LARGE_STRENGTH_MIN, THERMAL_LARGE_STRENGTH_MAX)
 
-    const overlapsExisting = thermals.some((existing) => {
-      const centerDistance = Math.hypot(existing.x - x, existing.z - z)
-      return centerDistance < existing.radius + radius + THERMAL_MIN_GAP
-    })
-    if (overlapsExisting) {
-      continue
-    }
-
     thermals.push({
       id: `thermal-${seed}-${thermals.length}`,
-      sizeClass: isSmall ? 'small' : 'large',
+      sizeClass: candidate.isSmall ? 'small' : 'large',
       groundY: THERMAL_BASE_Y,
-      x,
-      z,
-      radius,
+      x: candidate.x,
+      z: candidate.z,
+      radius: candidate.radius,
       baseHeight: randomInRange(rng, THERMAL_BASE_HEIGHT_MIN, THERMAL_BASE_HEIGHT_MAX),
       heightAmplitude: randomInRange(
         rng,

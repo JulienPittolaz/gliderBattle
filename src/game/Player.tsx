@@ -12,6 +12,9 @@ import {
   SINK_RATE,
   SPEEDBAR_BOOST,
   SPEEDBAR_SINK_BOOST,
+  TERRAIN_HEIGHT_BASE,
+  STORM_MAX_TOTAL_SINK,
+  STORM_START_RATIO,
   TERRAIN_ISLAND_RADIUS,
   TERRAIN_SIZE,
   YAW_RATE,
@@ -34,6 +37,8 @@ export const Player = ({
   thermals = [],
   gameSpeed = 1,
 }: PlayerProps) => {
+  const WATER_SURFACE_Y = TERRAIN_HEIGHT_BASE - 1.8
+  const WATER_RESPAWN_DEPTH = 0.25
   const input = useKeyboard()
   const direction = useMemo(() => new THREE.Vector3(), [])
   const initialSpawn = useMemo(
@@ -44,6 +49,8 @@ export const Player = ({
   const waterRadius = TERRAIN_SIZE * 0.9
   const sinkStartRadius =
     TERRAIN_ISLAND_RADIUS + (waterRadius - TERRAIN_ISLAND_RADIUS) * EDGE_SINK_START_RATIO
+  const stormStartRadius =
+    TERRAIN_ISLAND_RADIUS + (waterRadius - TERRAIN_ISLAND_RADIUS) * STORM_START_RATIO
 
   useFrame((_, delta) => {
     const player = playerRef.current
@@ -72,7 +79,14 @@ export const Player = ({
       1,
     )
     const edgeSink = EDGE_SINK_MAX * Math.pow(edgeSinkT, EDGE_SINK_CURVE_EXP)
-    const totalSink = currentSink + edgeSink
+    const stormT = THREE.MathUtils.clamp(
+      (distanceFromCenter - stormStartRadius) / Math.max(waterRadius - stormStartRadius, 1),
+      0,
+      1,
+    )
+    const uncappedSink = currentSink + edgeSink
+    const sinkCap = THREE.MathUtils.lerp(1000, STORM_MAX_TOTAL_SINK, stormT)
+    const totalSink = Math.min(uncappedSink, sinkCap)
     let thermalLift = 0
 
     for (const thermal of thermals) {
@@ -88,7 +102,15 @@ export const Player = ({
     player.position.y += (thermalLift - totalSink) * scaledDelta
 
     const impactAltitude = terrainHeightAt
-      ? terrainHeightAt(player.position.x, player.position.z) + PLAYER_CLEARANCE
+      ? (() => {
+          const groundY = terrainHeightAt(player.position.x, player.position.z)
+          const terrainImpactY = groundY + PLAYER_CLEARANCE
+          const isOverWater = groundY <= WATER_SURFACE_Y
+          if (isOverWater) {
+            return WATER_SURFACE_Y - WATER_RESPAWN_DEPTH
+          }
+          return terrainImpactY
+        })()
       : MIN_ALTITUDE
 
     if (player.position.y <= impactAltitude) {

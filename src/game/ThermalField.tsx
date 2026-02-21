@@ -1,22 +1,22 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
-import { THERMAL_BASE_Y } from './constants'
+import { THERMAL_BASE_Y, THERMAL_FADE_IN_SECONDS, THERMAL_FADE_OUT_SECONDS } from './constants'
 import { createThermalCartoonMaterial } from './materials/createThermalCartoonMaterial'
 import { createThermalCartoonNodeMaterial } from './materials/createThermalCartoonNodeMaterial'
 import { DEFAULT_THERMAL_SHADER_PRESET, THERMAL_SHADER_PRESETS } from './thermalShaderPresets'
 import type { ThermalShaderConfig } from './types'
-import type { ThermalColumn } from './thermals'
+import type { ThermalVisualEntry } from './thermals'
 import { getThermalHeight, getThermalStrengthNormalized } from './thermals'
 
 interface ThermalFieldProps {
-  thermals: ThermalColumn[]
+  thermals: ThermalVisualEntry[]
   shaderConfig: ThermalShaderConfig
   gameSpeed?: number
 }
 
 interface ThermalVisualProps {
-  thermal: ThermalColumn
+  thermalEntry: ThermalVisualEntry
   shaderConfig: ThermalShaderConfig
   gameSpeed: number
 }
@@ -34,13 +34,14 @@ const asColorString = (value: unknown, fallback: string) => {
   }
 }
 
-const ThermalVisual = ({ thermal, shaderConfig, gameSpeed }: ThermalVisualProps) => {
+const ThermalVisual = ({ thermalEntry, shaderConfig, gameSpeed }: ThermalVisualProps) => {
   const { gl } = useThree()
   const meshRef = useRef<THREE.Mesh>(null)
   const shaderMaterialRef = useRef<THREE.ShaderMaterial | null>(null)
+  const thermal = thermalEntry.thermal
   const strengthNorm = useMemo(
     () => getThermalStrengthNormalized(thermal),
-    [thermal],
+    [thermalEntry],
   )
   const safeConfig = useMemo<ThermalShaderConfig>(
     () => ({
@@ -148,9 +149,25 @@ const ThermalVisual = ({ thermal, shaderConfig, gameSpeed }: ThermalVisualProps)
 
     if (shaderMaterialRef.current) {
       shaderMaterialRef.current.uniforms.uTime.value = clock.getElapsedTime()
-      return
     }
 
+    const now = performance.now() * 0.001
+    const fadeIn = THREE.MathUtils.clamp(
+      (now - thermalEntry.appearAt) / THERMAL_FADE_IN_SECONDS,
+      0,
+      1,
+    )
+    const fadeOut =
+      thermalEntry.disappearAt === null
+        ? 1
+        : 1 -
+          THREE.MathUtils.clamp(
+            (now - thermalEntry.disappearAt) / THERMAL_FADE_OUT_SECONDS,
+            0,
+            1,
+          )
+    const fade = Math.min(fadeIn, fadeOut)
+    ;(mesh.material as THREE.Material).opacity = fade
   })
 
   return (
@@ -162,10 +179,10 @@ const ThermalVisual = ({ thermal, shaderConfig, gameSpeed }: ThermalVisualProps)
 
 export const ThermalField = ({ thermals, shaderConfig, gameSpeed = 1 }: ThermalFieldProps) => (
   <>
-    {thermals.map((thermal) => (
+    {thermals.map((thermalEntry) => (
       <ThermalVisual
-        key={thermal.id}
-        thermal={thermal}
+        key={thermalEntry.id}
+        thermalEntry={thermalEntry}
         shaderConfig={shaderConfig}
         gameSpeed={gameSpeed}
       />
