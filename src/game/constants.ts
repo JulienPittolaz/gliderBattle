@@ -11,13 +11,23 @@ export const SPAWN_SEARCH_RADIUS = 70
 export const SPAWN_SEARCH_STEPS = 5
 export const SPAWN_MIN_GROUND_HEIGHT = -2
 export const MIN_ALTITUDE = 1.2
-export const PLAYER_CLEARANCE = 0.35
+export const PLAYER_CLEARANCE = 0
 
 export const FORWARD_SPEED = 6
 export const SPEEDBAR_BOOST = 1
 export const SINK_RATE = 0.45
 export const SPEEDBAR_SINK_BOOST = 1.4
 export const YAW_RATE = 2.8
+export const PARAGLIDER_CELL_COUNT = 14
+export const PARAGLIDER_SPAN = 7.2
+export const PARAGLIDER_CHORD = 1.7
+export const PARAGLIDER_ARC = 1.05
+export const PARAGLIDER_CANOPY_Y = 2.45
+export const PARAGLIDER_HARNESS_Y = 0.08
+export const PARAGLIDER_PILOT_OFFSET_Y = 0.22
+export const PARAGLIDER_ANIM_BRAKE_PULL = 0.22
+export const PARAGLIDER_ANIM_LEG_SPEEDBAR = 0.2
+export const PARAGLIDER_ANIM_STRAP_SWAY = 0.03
 
 export const LOOK_OFFSET = new THREE.Vector3(0, 0.6, 0)
 export const CAMERA_OFFSET = new THREE.Vector3(0, 3.2, 10.5)

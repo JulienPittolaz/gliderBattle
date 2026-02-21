@@ -19,6 +19,7 @@ import {
   TERRAIN_SIZE,
   YAW_RATE,
 } from './constants'
+import { ParagliderModel } from './ParagliderModel'
 import { computeSafeSpawn } from './spawn'
 import type { ThermalColumn } from './thermals'
 import { getThermalLiftAtPoint } from './thermals'
@@ -46,6 +47,8 @@ export const Player = ({
     [terrainHeightAt],
   )
   const yawRef = useRef(initialSpawn.yaw)
+  const bankRef = useRef(0)
+  const speedbarRef = useRef(false)
   const waterRadius = TERRAIN_SIZE * 0.9
   const sinkStartRadius =
     TERRAIN_ISLAND_RADIUS + (waterRadius - TERRAIN_ISLAND_RADIUS) * EDGE_SINK_START_RATIO
@@ -66,6 +69,13 @@ export const Player = ({
     if (input.yawRight) {
       yawRef.current -= YAW_RATE * scaledDelta
     }
+    const targetBank = (input.yawRight ? 1 : 0) - (input.yawLeft ? 1 : 0)
+    bankRef.current = THREE.MathUtils.lerp(
+      bankRef.current,
+      targetBank,
+      1 - Math.exp(-8 * scaledDelta),
+    )
+    speedbarRef.current = input.speedbar
     direction.set(0, 0, -1)
     direction.applyAxisAngle(THREE.Object3D.DEFAULT_UP, yawRef.current)
     direction.normalize()
@@ -124,10 +134,9 @@ export const Player = ({
 
   return (
     <group ref={playerRef} position={initialSpawn.position.toArray()}>
-      <mesh castShadow>
-        <boxGeometry args={[0.8, 0.4, 1.2]} />
-        <meshStandardMaterial color="#ff9a3c" metalness={0.05} roughness={0.35} />
-      </mesh>
+      <group scale={0.58}>
+        <ParagliderModel bankRef={bankRef} speedbarRef={speedbarRef} />
+      </group>
     </group>
   )
 }
