@@ -136,6 +136,10 @@
   backdrop-filter: blur(4px);
 }
 
+.orb-join-notice {
+  background: rgba(12, 20, 32, 0.5);
+}
+
 .waiting-player-hint {
   position: fixed;
   left: 1rem;

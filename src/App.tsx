@@ -1,5 +1,5 @@
 import { Canvas } from '@react-three/fiber'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import './App.css'
 import { GameScene, type GameHudState } from './game/GameScene'
@@ -14,8 +14,12 @@ type CanvasDefaults = {
 }
 
 function App() {
+  const PLAYER_JOINED_BANNER_MS = 1200
   const [helpOpen, setHelpOpen] = useState(false)
   const [speedFxAmount, setSpeedFxAmount] = useState(0)
+  const [playerJoinedBannerVisible, setPlayerJoinedBannerVisible] = useState(false)
+  const playerJoinedTimeoutRef = useRef<number | null>(null)
+  const previousCountdownRef = useRef(0)
   const [hudState, setHudState] = useState<GameHudState>({
     username: 'Guest',
     holderLabel: 'Nobody',
@@ -43,6 +47,34 @@ function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [helpOpen])
+
+  useEffect(() => {
+    const previousCountdown = previousCountdownRef.current
+    const currentCountdown = hudState.orbCountdownRemainingMs
+    const countdownStarted = previousCountdown <= 0 && currentCountdown > 0
+    previousCountdownRef.current = currentCountdown
+
+    if (!countdownStarted) {
+      return
+    }
+
+    setPlayerJoinedBannerVisible(true)
+    if (playerJoinedTimeoutRef.current !== null) {
+      window.clearTimeout(playerJoinedTimeoutRef.current)
+    }
+    playerJoinedTimeoutRef.current = window.setTimeout(() => {
+      setPlayerJoinedBannerVisible(false)
+      playerJoinedTimeoutRef.current = null
+    }, PLAYER_JOINED_BANNER_MS)
+  }, [hudState.orbCountdownRemainingMs])
+
+  useEffect(() => {
+    return () => {
+      if (playerJoinedTimeoutRef.current !== null) {
+        window.clearTimeout(playerJoinedTimeoutRef.current)
+      }
+    }
+  }, [])
 
   const createR3FRenderer = useCallback(async (defaults: CanvasDefaults) => {
     if ('gpu' in navigator) {
@@ -139,7 +171,10 @@ function App() {
         soundEnabled={varioEnabled}
         onToggleSound={toggleVario}
       />
-      {hudState.orbCountdownRemainingMs > 0 ? (
+      {playerJoinedBannerVisible ? (
+        <div className="orb-countdown orb-join-notice">Player joined</div>
+      ) : null}
+      {!playerJoinedBannerVisible && hudState.orbCountdownRemainingMs > 0 ? (
         <div className="orb-countdown">
           Orb in {Math.max(1, Math.ceil(hudState.orbCountdownRemainingMs / 1000))}s
         </div>
