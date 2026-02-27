@@ -36,6 +36,35 @@ function App() {
   } = useVarioAudio()
 
   useEffect(() => {
+    if (!import.meta.env.PROD) {
+      return
+    }
+
+    const GA_ID = 'G-CZGSF09Y67'
+    const existing = document.querySelector(`script[data-ga-id="${GA_ID}"]`)
+    if (existing) {
+      return
+    }
+
+    const w = window as Window & {
+      dataLayer?: unknown[]
+      gtag?: (...args: unknown[]) => void
+    }
+    w.dataLayer = w.dataLayer ?? []
+    w.gtag = w.gtag ?? ((...args: unknown[]) => {
+      w.dataLayer?.push(args)
+    })
+    w.gtag('js', new Date())
+    w.gtag('config', GA_ID)
+
+    const script = document.createElement('script')
+    script.async = true
+    script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`
+    script.dataset.gaId = GA_ID
+    document.head.appendChild(script)
+  }, [])
+
+  useEffect(() => {
     if (!helpOpen) {
       return
     }
