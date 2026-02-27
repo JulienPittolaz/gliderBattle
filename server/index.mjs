@@ -1,9 +1,15 @@
 import { createServer } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import colyseusPkg from "colyseus";
 import * as schemaPkg from "@colyseus/schema";
 
 const { Room, Server } = colyseusPkg;
 const { ArraySchema, MapSchema, Schema, defineTypes } = schemaPkg;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const DIST_DIR = path.resolve(__dirname, "../dist");
 
 const PORT = Number(process.env.PORT ?? 2567);
 const WORLD_NAME = "world";
@@ -44,6 +50,65 @@ const ORB_SPAWN_ALTITUDE_MAX = 34;
 const ORB_SPAWN_RADIUS = 72;
 const ORB_MIN_PLAYERS = 2;
 const ORB_START_COUNTDOWN_MS = 10000;
+
+const CONTENT_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".mjs": "application/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".ico": "image/x-icon",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+const serveDist = (req, res) => {
+  if (!req.url) {
+    res.writeHead(400);
+    res.end("Bad request");
+    return;
+  }
+
+  const url = new URL(req.url, "http://localhost");
+  let requestedPath = decodeURIComponent(url.pathname);
+  if (requestedPath === "/") {
+    requestedPath = "/index.html";
+  }
+
+  const normalized = path.normalize(requestedPath).replace(/^(\.\.[/\\])+/, "");
+  const filePath = path.join(DIST_DIR, normalized);
+  const fileExists = existsSync(filePath);
+  const isAssetRequest = path.extname(normalized).length > 0;
+
+  let targetPath = filePath;
+  if (!fileExists || !isAssetRequest) {
+    targetPath = path.join(DIST_DIR, "index.html");
+  }
+
+  if (!existsSync(targetPath)) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("dist/ not found. Run npm run build first.");
+    return;
+  }
+
+  const ext = path.extname(targetPath).toLowerCase();
+  const contentType = CONTENT_TYPES[ext] ?? "application/octet-stream";
+
+  try {
+    const content = readFileSync(targetPath);
+    res.writeHead(200, { "Content-Type": contentType });
+    res.end(content);
+  } catch {
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Failed to serve static file.");
+  }
+};
 
 const createRng = (seed) => {
   let t = seed >>> 0;
@@ -509,7 +574,9 @@ class WorldRoom extends Room {
   }
 }
 
-const httpServer = createServer();
+const httpServer = createServer((req, res) => {
+  serveDist(req, res);
+});
 const gameServer = new Server({ server: httpServer });
 gameServer.define(WORLD_NAME, WorldRoom);
 
