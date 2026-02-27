@@ -38,7 +38,16 @@ const ThermalVisual = ({ thermalEntry, shaderConfig, gameSpeed }: ThermalVisualP
   const { gl } = useThree()
   const meshRef = useRef<THREE.Mesh>(null)
   const shaderMaterialRef = useRef<THREE.ShaderMaterial | null>(null)
+  const elapsedRef = useRef(0)
   const thermal = thermalEntry.thermal
+  const fadeRef = useRef(-1)
+  const { height, centerY } = useMemo(() => {
+    const computedHeight = getThermalHeight(thermal)
+    return {
+      height: computedHeight,
+      centerY: THERMAL_BASE_Y + computedHeight / 2,
+    }
+  }, [thermal])
   const strengthNorm = useMemo(
     () => getThermalStrengthNormalized(thermal),
     [thermalEntry],
@@ -130,30 +139,31 @@ const ThermalVisual = ({ thermalEntry, shaderConfig, gameSpeed }: ThermalVisualP
 
   useEffect(() => {
     shaderMaterialRef.current = material instanceof THREE.ShaderMaterial ? material : null
+    const mesh = meshRef.current
+    if (mesh) {
+      mesh.position.set(thermal.x, centerY, thermal.z)
+      mesh.scale.set(1, height, 1)
+    }
     return () => {
       material.dispose()
       shaderMaterialRef.current = null
     }
-  }, [material])
+  }, [centerY, height, material, thermal.x, thermal.z])
 
-  useFrame(({ clock }) => {
+  useFrame((_, delta) => {
     const mesh = meshRef.current
     if (!mesh) {
       return
     }
-
-    const height = getThermalHeight(thermal)
-    const centerY = THERMAL_BASE_Y + height / 2
-    mesh.position.set(thermal.x, centerY, thermal.z)
-    mesh.scale.set(1, height, 1)
+    elapsedRef.current += delta * gameSpeed
 
     if (shaderMaterialRef.current) {
-      shaderMaterialRef.current.uniforms.uTime.value = clock.getElapsedTime()
+      shaderMaterialRef.current.uniforms.uTime.value = elapsedRef.current
     }
 
     const now = Date.now() * 0.001
     const fadeIn = THREE.MathUtils.clamp(
-      (now - thermalEntry.appearAt) / THERMAL_FADE_IN_SECONDS,
+      (now - thermalEntry.thermalAppearAt) / THERMAL_FADE_IN_SECONDS,
       0,
       1,
     )
@@ -167,7 +177,10 @@ const ThermalVisual = ({ thermalEntry, shaderConfig, gameSpeed }: ThermalVisualP
             1,
           )
     const fade = Math.min(fadeIn, fadeOut)
-    ;(mesh.material as THREE.Material).opacity = fade
+    if (Math.abs(fade - fadeRef.current) > 0.002) {
+      ;(mesh.material as THREE.Material).opacity = fade
+      fadeRef.current = fade
+    }
   })
 
   return (

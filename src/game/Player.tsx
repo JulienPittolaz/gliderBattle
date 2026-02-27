@@ -1,5 +1,5 @@
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type { RefObject } from 'react'
 import * as THREE from 'three'
 import {
@@ -17,6 +17,7 @@ import {
   TERRAIN_ISLAND_RADIUS,
   TERRAIN_SIZE,
   TERRAIN_WATER_LEVEL,
+  THERMAL_LIFT_MULTIPLIER,
   YAW_RATE,
 } from './constants'
 import { ParagliderModel } from './ParagliderModel'
@@ -32,6 +33,10 @@ export interface PlayerProps {
   thermals?: ThermalColumn[]
   gameSpeed?: number
   onPose?: (pose: LocalPoseMessage) => void
+  onCrash?: () => void
+  onVerticalSpeed?: (verticalSpeed: number) => void
+  onAirspeed?: (airspeed: number) => void
+  onSpeedbarActiveChange?: (active: boolean) => void
 }
 
 export const Player = ({
@@ -40,6 +45,10 @@ export const Player = ({
   thermals = [],
   gameSpeed = 1,
   onPose,
+  onCrash,
+  onVerticalSpeed,
+  onAirspeed,
+  onSpeedbarActiveChange,
 }: PlayerProps) => {
   const WATER_SURFACE_Y = TERRAIN_WATER_LEVEL
   const WATER_RESPAWN_DEPTH = 0.25
@@ -79,6 +88,7 @@ export const Player = ({
       1 - Math.exp(-8 * scaledDelta),
     )
     speedbarRef.current = input.speedbar
+    onSpeedbarActiveChange?.(speedbarRef.current)
     direction.set(0, 0, -1)
     direction.applyAxisAngle(THREE.Object3D.DEFAULT_UP, yawRef.current)
     direction.normalize()
@@ -114,9 +124,10 @@ export const Player = ({
         player.position.z,
       )
     }
+    const netVerticalSpeed = thermalLift * THERMAL_LIFT_MULTIPLIER - totalSink
 
     player.position.addScaledVector(direction, currentSpeed * scaledDelta)
-    player.position.y += (thermalLift - totalSink) * scaledDelta
+    player.position.y += netVerticalSpeed * scaledDelta
 
     const impactAltitude = terrainHeightAt
       ? (() => {
@@ -131,6 +142,7 @@ export const Player = ({
       : MIN_ALTITUDE
 
     if (player.position.y <= impactAltitude) {
+      onCrash?.()
       const safeSpawn = computeSafeSpawn(terrainHeightAt)
       player.position.copy(safeSpawn.position)
       yawRef.current = safeSpawn.yaw
@@ -148,7 +160,15 @@ export const Player = ({
         speedbar: speedbarRef.current,
       })
     }
+    onVerticalSpeed?.(netVerticalSpeed)
+    onAirspeed?.(currentSpeed)
   })
+
+  useEffect(() => {
+    return () => {
+      onSpeedbarActiveChange?.(false)
+    }
+  }, [onSpeedbarActiveChange])
 
   return (
     <group ref={playerRef} position={initialSpawn.position.toArray()}>

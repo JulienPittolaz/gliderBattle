@@ -2,8 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Client, Room } from 'colyseus.js'
 import type { ThermalColumn } from '../game/thermals'
 import type {
+  LeaderboardEntry,
   LocalPoseMessage,
   MultiplayerSessionState,
+  OrbSnapshot,
+  PlayerSnapshot,
   RemotePlayerSnapshot,
 } from './types'
 
@@ -55,11 +58,9 @@ const toThermals = (state: unknown): ThermalColumn[] | null => {
   return output
 }
 
-const toRemotePlayers = (
+const toPlayers = (
   state: unknown,
-  localSessionId: string | null,
-  receivedAtMs: number,
-): RemotePlayerSnapshot[] => {
+): PlayerSnapshot[] => {
   if (!state || typeof state !== 'object') {
     return []
   }
@@ -71,10 +72,10 @@ const toRemotePlayers = (
   const entries = Array.from(
     (players as { entries?: () => Iterable<[string, unknown]> }).entries?.() ?? [],
   )
-  const output: RemotePlayerSnapshot[] = []
+  const output: PlayerSnapshot[] = []
 
   for (const [sessionId, player] of entries) {
-    if (sessionId === localSessionId || !player || typeof player !== 'object') {
+    if (!player || typeof player !== 'object') {
       continue
     }
     const p = player as Record<string, unknown>
@@ -87,11 +88,72 @@ const toRemotePlayers = (
       yaw: asNumber(p.yaw),
       bank: asNumber(p.bank),
       speedbar: Boolean(p.speedbar),
-      updatedAtMs: receivedAtMs,
+      currentOrbScore: asNumber(p.currentOrbScore, asNumber(p.score, 0)),
+      bestOrbScore: asNumber(p.bestOrbScore, asNumber(p.score, 0)),
     })
   }
 
   return output
+}
+
+const toRemotePlayers = (
+  players: PlayerSnapshot[],
+  localSessionId: string | null,
+  receivedAtMs: number,
+): RemotePlayerSnapshot[] =>
+  players
+    .filter((player) => player.sessionId !== localSessionId)
+    .map((player) => ({
+      ...player,
+      updatedAtMs: receivedAtMs,
+    }))
+
+const toOrb = (state: unknown): OrbSnapshot | null => {
+  if (!state || typeof state !== 'object') {
+    return null
+  }
+  const orb = (state as { orb?: unknown }).orb
+  if (!orb || typeof orb !== 'object') {
+    return null
+  }
+
+  const source = orb as Record<string, unknown>
+  return {
+    x: asNumber(source.x),
+    y: asNumber(source.y),
+    z: asNumber(source.z),
+    holderSessionId: typeof source.holderSessionId === 'string' ? source.holderSessionId : '',
+    lastTransferAtMs: asNumber(source.lastTransferAtMs),
+  }
+}
+
+const toLeaderboard = (players: PlayerSnapshot[]): LeaderboardEntry[] =>
+  [...players]
+    .sort((a, b) => {
+      if (b.bestOrbScore !== a.bestOrbScore) {
+        return b.bestOrbScore - a.bestOrbScore
+      }
+      return a.nickname.localeCompare(b.nickname)
+    })
+    .slice(0, 3)
+    .map((player) => ({
+      sessionId: player.sessionId,
+      nickname: player.nickname,
+      score: player.bestOrbScore,
+    }))
+
+const toOrbActive = (state: unknown): boolean => {
+  if (!state || typeof state !== 'object') {
+    return false
+  }
+  return Boolean((state as { orbActive?: unknown }).orbActive)
+}
+
+const toOrbCountdownRemainingMs = (state: unknown): number => {
+  if (!state || typeof state !== 'object') {
+    return 0
+  }
+  return asNumber((state as { orbCountdownRemainingMs?: unknown }).orbCountdownRemainingMs, 0)
 }
 
 const randomNickname = () => `Pilot-${Math.floor(Math.random() * 9000 + 1000)}`
@@ -100,8 +162,13 @@ export const useMultiplayerSession = () => {
   const [session, setSession] = useState<MultiplayerSessionState>({
     connected: false,
     localSessionId: null,
+    players: [],
     remotePlayers: [],
     thermals: null,
+    orb: null,
+    orbActive: false,
+    orbCountdownRemainingMs: 0,
+    leaderboard: [],
   })
   const roomRef = useRef<Room | null>(null)
   const pendingPoseRef = useRef<LocalPoseMessage | null>(null)
@@ -132,11 +199,17 @@ export const useMultiplayerSession = () => {
             return
           }
           const receivedAtMs = performance.now()
+          const players = toPlayers(state)
           setSession({
             connected: true,
             localSessionId: room.sessionId,
-            remotePlayers: toRemotePlayers(state, room.sessionId, receivedAtMs),
+            players,
+            remotePlayers: toRemotePlayers(players, room.sessionId, receivedAtMs),
             thermals: toThermals(state),
+            orb: toOrb(state),
+            orbActive: toOrbActive(state),
+            orbCountdownRemainingMs: toOrbCountdownRemainingMs(state),
+            leaderboard: toLeaderboard(players),
           })
         })
 
@@ -147,8 +220,13 @@ export const useMultiplayerSession = () => {
           setSession({
             connected: false,
             localSessionId: null,
+            players: [],
             remotePlayers: [],
             thermals: null,
+            orb: null,
+            orbActive: false,
+            orbCountdownRemainingMs: 0,
+            leaderboard: [],
           })
         })
       } catch (error) {
@@ -186,8 +264,20 @@ export const useMultiplayerSession = () => {
     [],
   )
 
+  const sendCrash = useMemo(
+    () => () => {
+      const room = roomRef.current
+      if (!room) {
+        return
+      }
+      room.send('crash')
+    },
+    [],
+  )
+
   return {
     ...session,
     setLocalPose,
+    sendCrash,
   }
 }

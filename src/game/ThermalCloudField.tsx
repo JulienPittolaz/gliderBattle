@@ -1,5 +1,5 @@
 import { useFrame } from '@react-three/fiber'
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import {
   THERMAL_FADE_IN_SECONDS,
@@ -134,8 +134,20 @@ const makeCloudParts = (thermal: ThermalColumn): CloudPart[] => {
 
 const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
   const groupRef = useRef<THREE.Group>(null)
+  const meshRefs = useRef<Array<THREE.Mesh | null>>([])
+  const opacityRef = useRef(-1)
+  const visibilityRef = useRef(false)
   const thermal = thermalEntry.thermal
   const parts = useMemo(() => makeCloudParts(thermal), [thermal])
+  const topY = useMemo(() => getThermalTopY(thermal), [thermal])
+
+  useEffect(() => {
+    const group = groupRef.current
+    if (!group) {
+      return
+    }
+    group.position.set(thermal.x, topY + THERMAL_CLOUD_TOP_OFFSET, thermal.z)
+  }, [thermal.x, thermal.z, topY])
 
   useFrame(() => {
     const group = groupRef.current
@@ -143,12 +155,9 @@ const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
       return
     }
 
-    const topY = getThermalTopY(thermal)
-    group.position.set(thermal.x, topY + THERMAL_CLOUD_TOP_OFFSET, thermal.z)
-
     const now = Date.now() * 0.001
     const fadeIn = THREE.MathUtils.clamp(
-      (now - thermalEntry.appearAt) / THERMAL_FADE_IN_SECONDS,
+      (now - thermalEntry.cloudAppearAt) / THERMAL_FADE_IN_SECONDS,
       0,
       1,
     )
@@ -161,17 +170,24 @@ const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
             0,
             1,
           )
-    group.visible = fadeIn > 0.001 && fadeOut > 0.001
-    group.traverse((obj) => {
-      const mesh = obj as THREE.Mesh
-      if (!mesh.isMesh) {
-        return
+    const visible = fadeIn > 0.001 && fadeOut > 0.001
+    if (visible !== visibilityRef.current) {
+      group.visible = visible
+      visibilityRef.current = visible
+    }
+
+    const opacity = Math.min(fadeIn, fadeOut)
+    if (Math.abs(opacity - opacityRef.current) > 0.002) {
+      for (const mesh of meshRefs.current) {
+        if (!mesh) {
+          continue
+        }
+        const material = mesh.material as THREE.MeshStandardMaterial
+        material.opacity = opacity
+        material.depthWrite = opacity >= 0.98
       }
-      const material = mesh.material as THREE.MeshStandardMaterial
-      material.transparent = true
-      material.opacity = Math.min(fadeIn, fadeOut)
-      material.depthWrite = material.opacity >= 0.98
-    })
+      opacityRef.current = opacity
+    }
   })
 
   return (
@@ -179,6 +195,9 @@ const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
       {parts.map((part, index) => (
         <mesh
           key={`${thermal.id}-cloud-part-${index}`}
+          ref={(mesh) => {
+            meshRefs.current[index] = mesh
+          }}
           position={part.offset}
           rotation={part.rotation}
           scale={part.stretch}
@@ -191,6 +210,8 @@ const ThermalCloud = ({ thermalEntry }: ThermalCloudProps) => {
             roughness={0.95}
             metalness={0}
             flatShading
+            transparent
+            opacity={1}
           />
         </mesh>
       ))}

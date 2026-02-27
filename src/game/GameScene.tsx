@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import {
   FOG_COLOR,
@@ -10,6 +11,7 @@ import {
   TERRAIN_SIZE,
   TERRAIN_WATER_LEVEL,
   THERMAL_COUNT,
+  THERMAL_CLOUD_LEAD_SECONDS,
   THERMAL_DESPAWN_DELAY_MAX_SECONDS,
   THERMAL_FADE_OUT_SECONDS,
   THERMAL_RESEED_SECONDS,
@@ -18,17 +20,21 @@ import { FollowCamera } from './FollowCamera'
 import { useGameSpeedDebug } from './GameSpeedDebug'
 import { useRainPostFxDebug } from './RainPostFxDebug'
 import { StormPostFX } from './StormPostFX'
+import { SpeedPostFX } from './SpeedPostFX'
 import { StormZoneEffects } from './StormZoneEffects'
 import { ThermalCloudField } from './ThermalCloudField'
 import { useThermalShaderDebug } from './ThermalShaderDebugPanel'
+import { useSpeedPostFxDebug } from './SpeedPostFxDebug'
 import { useMultiplayerDebug } from './MultiplayerDebug'
 import { Player } from './Player'
+import { Orb } from './Orb'
 import { RemotePlayers } from './RemotePlayers'
 import { ThermalField } from './ThermalField'
 import { TerrainForest } from './TerrainForest'
 import { createProceduralIslandTerrain } from './terrain'
 import { generateThermals } from './thermals'
 import type { ThermalVisualEntry } from './thermals'
+import type { LeaderboardEntry } from '../net/types'
 import { useMultiplayerSession } from '../net/useMultiplayerSession'
 
 const SKY_RADIUS = 260
@@ -69,7 +75,28 @@ const SkyDome = () => {
   )
 }
 
-export const GameScene = () => {
+export interface GameHudState {
+  username: string
+  holderLabel: string
+  localScore: number
+  leaderboard: LeaderboardEntry[]
+  orbCountdownRemainingMs: number
+  waitingForSecondPlayer: boolean
+}
+
+interface GameSceneProps {
+  onVerticalSpeed?: (verticalSpeed: number) => void
+  onAirspeed?: (airspeed: number) => void
+  onHudStateChange?: (hud: GameHudState) => void
+  onSpeedFxAmountChange?: (amount: number) => void
+}
+
+export const GameScene = ({
+  onVerticalSpeed,
+  onAirspeed,
+  onHudStateChange,
+  onSpeedFxAmountChange,
+}: GameSceneProps) => {
   const playerRef = useRef<THREE.Group>(null)
   const fogRef = useRef<THREE.Fog>(null)
   const ambientLightRef = useRef<THREE.AmbientLight>(null)
@@ -80,9 +107,13 @@ export const GameScene = () => {
   const gameSpeed = useGameSpeedDebug()
   const multiplayerDebug = useMultiplayerDebug()
   const rainPostFxConfig = useRainPostFxDebug()
+  const speedPostFxConfig = useSpeedPostFxDebug()
   const { shaderConfig } = useThermalShaderDebug()
   const multiplayer = useMultiplayerSession()
   const [thermalSeedStep, setThermalSeedStep] = useState(0)
+  const speedFxTargetRef = useRef(0)
+  const speedFxAmountRef = useRef(0)
+  const lastSpeedFxSentRef = useRef(-1)
   const localThermals = useMemo(
     () =>
       generateThermals(
@@ -94,14 +125,67 @@ export const GameScene = () => {
     [terrain, thermalSeedStep],
   )
   const thermals = multiplayer.thermals ?? localThermals
+  const players = multiplayer.players
+  const holderLabel = useMemo(() => {
+    const holderSessionId = multiplayer.orb?.holderSessionId ?? ''
+    if (!holderSessionId) {
+      return 'Nobody'
+    }
+    const holder = players.find((player) => player.sessionId === holderSessionId)
+    return holder?.nickname ?? 'Nobody'
+  }, [multiplayer.orb?.holderSessionId, players])
+  const localScore = useMemo(() => {
+    if (!multiplayer.localSessionId) {
+      return 0
+    }
+    const localPlayer = players.find((player) => player.sessionId === multiplayer.localSessionId)
+    return localPlayer?.currentOrbScore ?? 0
+  }, [multiplayer.localSessionId, players])
+  const localUsername = useMemo(() => {
+    if (!multiplayer.localSessionId) {
+      return 'Guest'
+    }
+    const localPlayer = players.find((player) => player.sessionId === multiplayer.localSessionId)
+    return localPlayer?.nickname ?? 'Guest'
+  }, [multiplayer.localSessionId, players])
+
+  useEffect(() => {
+    onHudStateChange?.({
+      username: localUsername,
+      holderLabel,
+      localScore,
+      leaderboard: multiplayer.leaderboard,
+      orbCountdownRemainingMs: multiplayer.connected ? multiplayer.orbCountdownRemainingMs : 0,
+      waitingForSecondPlayer: multiplayer.connected && multiplayer.players.length === 1,
+    })
+  }, [
+    holderLabel,
+    localScore,
+    localUsername,
+    multiplayer.connected,
+    multiplayer.players.length,
+    multiplayer.leaderboard,
+    multiplayer.orbCountdownRemainingMs,
+    onHudStateChange,
+  ])
   const [thermalVisuals, setThermalVisuals] = useState<ThermalVisualEntry[]>(() => {
     return thermals.map((thermal) => ({
       id: thermal.id,
       thermal,
-      appearAt: thermal.activationAt,
+      cloudAppearAt: thermal.activationAt,
+      thermalAppearAt: thermal.activationAt + THERMAL_CLOUD_LEAD_SECONDS,
       disappearAt: null,
     }))
   })
+  const activeLiftThermals = useMemo(() => {
+    const now = Date.now() * 0.001
+    return thermalVisuals
+      .filter(
+        (entry) =>
+          entry.disappearAt === null || now - entry.disappearAt <= THERMAL_FADE_OUT_SECONDS,
+      )
+      .map((entry) => entry.thermal)
+  }, [thermalVisuals])
 
   useEffect(() => {
     const now = Date.now() * 0.001
@@ -137,7 +221,8 @@ export const GameScene = () => {
         .map((thermal) => ({
           id: thermal.id,
           thermal,
-          appearAt: thermal.activationAt,
+          cloudAppearAt: thermal.activationAt,
+          thermalAppearAt: thermal.activationAt + THERMAL_CLOUD_LEAD_SECONDS,
           disappearAt: null,
         }))
 
@@ -158,6 +243,20 @@ export const GameScene = () => {
 
     return () => window.clearInterval(timer)
   }, [])
+
+  useFrame((_, delta) => {
+    const target = speedFxTargetRef.current
+    const duration = target > speedFxAmountRef.current
+      ? Math.max(0.01, speedPostFxConfig.attack)
+      : Math.max(0.01, speedPostFxConfig.release)
+    const alpha = THREE.MathUtils.clamp(delta / duration, 0, 1)
+    speedFxAmountRef.current = THREE.MathUtils.lerp(speedFxAmountRef.current, target, alpha)
+    const rounded = Math.round(speedFxAmountRef.current * 100) / 100
+    if (rounded !== lastSpeedFxSentRef.current) {
+      lastSpeedFxSentRef.current = rounded
+      onSpeedFxAmountChange?.(rounded)
+    }
+  })
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -190,21 +289,29 @@ export const GameScene = () => {
         }
       />
       <StormPostFX stormFactorRef={stormFactorRef} config={rainPostFxConfig} />
+      <SpeedPostFX amountRef={speedFxAmountRef} config={speedPostFxConfig} />
 
       <Player
         playerRef={playerRef}
         terrainHeightAt={terrain.getHeightAt}
-        thermals={thermals}
+        thermals={activeLiftThermals}
         gameSpeed={gameSpeed}
         onPose={multiplayer.setLocalPose}
+        onCrash={multiplayer.sendCrash}
+        onVerticalSpeed={onVerticalSpeed}
+        onAirspeed={onAirspeed}
+        onSpeedbarActiveChange={(active) => {
+          speedFxTargetRef.current = active ? 1 : 0
+        }}
       />
+      <Orb orb={multiplayer.connected && multiplayer.orbActive ? multiplayer.orb : null} />
       <RemotePlayers
         players={multiplayer.remotePlayers}
         smoothingMode={multiplayerDebug.smoothingMode}
         interpDelayMs={multiplayerDebug.interpDelayMs}
         maxExtrapolationMs={multiplayerDebug.maxExtrapolationMs}
       />
-      <FollowCamera targetRef={playerRef} gameSpeed={gameSpeed} />
+      <FollowCamera targetRef={playerRef} gameSpeed={gameSpeed} speedFxAmountRef={speedFxAmountRef} />
       <ThermalField thermals={thermalVisuals} shaderConfig={shaderConfig} gameSpeed={gameSpeed} />
       <ThermalCloudField thermals={thermalVisuals} />
 

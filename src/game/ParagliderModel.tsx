@@ -124,6 +124,7 @@ const createLineGeometry = (cells: CellDescriptor[]) => {
 
 export const ParagliderModel = ({ bankRef, speedbarRef }: ParagliderModelProps) => {
   const rigRef = useRef<THREE.Group>(null)
+  const elapsedRef = useRef(0)
   const bankSmoothRef = useRef(0)
   const speedbarSmoothRef = useRef(0)
   const leftArmRef = useRef<THREE.Group>(null)
@@ -137,11 +138,12 @@ export const ParagliderModel = ({ bankRef, speedbarRef }: ParagliderModelProps) 
   const cells = useMemo(() => createCellDescriptors(), [])
   const lineGeometry = useMemo(() => createLineGeometry(cells), [cells])
 
-  useFrame(({ clock }, delta) => {
+  useFrame((_, delta) => {
     const rig = rigRef.current
     if (!rig) {
       return
     }
+    elapsedRef.current += delta
 
     const targetBank = THREE.MathUtils.clamp(bankRef.current ?? 0, -1, 1)
     bankSmoothRef.current = THREE.MathUtils.lerp(
@@ -157,7 +159,7 @@ export const ParagliderModel = ({ bankRef, speedbarRef }: ParagliderModelProps) 
       1 - Math.exp(-6 * delta),
     )
 
-    const t = clock.getElapsedTime()
+    const t = elapsedRef.current
     const flap = Math.sin(t * 2.1) * 0.018
     const bank = bankSmoothRef.current
     const speed = speedbarSmoothRef.current

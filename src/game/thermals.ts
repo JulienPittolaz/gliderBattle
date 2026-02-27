@@ -10,6 +10,8 @@ import {
   THERMAL_EDGE_MARGIN,
   THERMAL_HEIGHT_AMPLITUDE_MAX,
   THERMAL_HEIGHT_AMPLITUDE_MIN,
+  THERMAL_SOFT_CEILING_ABOVE,
+  THERMAL_SOFT_CEILING_BELOW,
   THERMAL_LARGE_RADIUS_MAX,
   THERMAL_LARGE_RADIUS_MIN,
   THERMAL_LARGE_STRENGTH_MAX,
@@ -40,7 +42,8 @@ export interface ThermalColumn {
 export interface ThermalVisualEntry {
   id: string
   thermal: ThermalColumn
-  appearAt: number
+  cloudAppearAt: number
+  thermalAppearAt: number
   disappearAt: number | null
 }
 
@@ -77,16 +80,19 @@ export const getThermalLiftAtPoint = (
   }
 
   const topY = getThermalTopY(thermal)
-  if (y > topY) {
+  const ceilingStart = topY - THERMAL_SOFT_CEILING_BELOW
+  const ceilingEnd = topY + THERMAL_SOFT_CEILING_ABOVE
+  if (y >= ceilingEnd) {
     return 0
   }
-
-  const radialT = 1 - distance / thermal.radius
-  const radialInfluence = radialT * radialT
-  const height = Math.max(topY - THERMAL_BASE_Y, 1)
-  const verticalRatio = THREE.MathUtils.clamp((y - THERMAL_BASE_Y) / height, 0, 1)
-  const verticalInfluence = THREE.MathUtils.lerp(1, 0.2, verticalRatio)
-  return thermal.strength * radialInfluence * verticalInfluence
+  const ceilingT = THREE.MathUtils.clamp(
+    (y - ceilingStart) / Math.max(ceilingEnd - ceilingStart, 0.001),
+    0,
+    1,
+  )
+  const smoothCeiling = ceilingT * ceilingT * (3 - 2 * ceilingT)
+  const ceilingInfluence = 1 - smoothCeiling
+  return thermal.strength * ceilingInfluence
 }
 
 export const getThermalStrengthNormalized = (thermal: ThermalColumn) => {

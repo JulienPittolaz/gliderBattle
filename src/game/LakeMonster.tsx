@@ -17,14 +17,16 @@ interface LakeMonsterProps {
 export const LakeMonster = ({ position, gameSpeed = 1 }: LakeMonsterProps) => {
   const rootRef = useRef<THREE.Group>(null)
   const baseY = useMemo(() => position[1], [position])
+  const elapsedRef = useRef(0)
 
-  useFrame(({ clock }) => {
+  useFrame((_, delta) => {
     const root = rootRef.current
     if (!root) {
       return
     }
+    elapsedRef.current += delta
 
-    const t = clock.getElapsedTime() * gameSpeed
+    const t = elapsedRef.current * gameSpeed
     root.position.y = baseY + Math.sin(t * LAKE_MONSTER_BOB_SPEED) * LAKE_MONSTER_BOB_AMPLITUDE
     root.rotation.y = Math.sin(t * LAKE_MONSTER_SWAY_SPEED) * LAKE_MONSTER_SWAY_AMPLITUDE
   })

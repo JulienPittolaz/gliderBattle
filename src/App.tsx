@@ -1,10 +1,10 @@
 import { Canvas } from '@react-three/fiber'
-import { Leva } from 'leva'
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import * as THREE from 'three'
 import './App.css'
-import { GameScene } from './game/GameScene'
-import type { RendererBackend } from './three/types'
+import { GameScene, type GameHudState } from './game/GameScene'
+import { TagChaseHud } from './game/TagChaseHud'
+import { useVarioAudio } from './game/useVarioAudio'
 
 type CanvasDefaults = {
   canvas: HTMLCanvasElement
@@ -14,7 +14,35 @@ type CanvasDefaults = {
 }
 
 function App() {
-  const [backend, setBackend] = useState<RendererBackend | null>(null)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [speedFxAmount, setSpeedFxAmount] = useState(0)
+  const [hudState, setHudState] = useState<GameHudState>({
+    username: 'Guest',
+    holderLabel: 'Nobody',
+    localScore: 0,
+    leaderboard: [],
+    orbCountdownRemainingMs: 0,
+    waitingForSecondPlayer: false,
+  })
+  const {
+    enabled: varioEnabled,
+    toggleEnabled: toggleVario,
+    setVerticalSpeed,
+    setAirspeed,
+  } = useVarioAudio()
+
+  useEffect(() => {
+    if (!helpOpen) {
+      return
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setHelpOpen(false)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [helpOpen])
 
   const createR3FRenderer = useCallback(async (defaults: CanvasDefaults) => {
     if ('gpu' in navigator) {
@@ -28,14 +56,12 @@ function App() {
           powerPreference: 'high-performance',
         }) as unknown as THREE.WebGLRenderer & { init: () => Promise<unknown> }
         await renderer.init()
-        setBackend('webgpu')
         return renderer
       } catch (error) {
         console.warn('WebGPU renderer init failed, falling back to WebGL.', error)
       }
     }
 
-    setBackend('webgl')
     return new THREE.WebGLRenderer({
       ...defaults,
     })
@@ -53,13 +79,76 @@ function App() {
             gl.setPixelRatio(Math.min(window.devicePixelRatio, 2))
           }}
         >
-          <GameScene />
+          <GameScene
+            onVerticalSpeed={setVerticalSpeed}
+            onAirspeed={setAirspeed}
+            onHudStateChange={setHudState}
+            onSpeedFxAmountChange={setSpeedFxAmount}
+          />
         </Canvas>
       </div>
-      <div className="backend-pill">
-        Renderer: {backend === null ? 'initializing...' : backend}
-      </div>
-      <Leva collapsed={false} oneLineLabels />
+      <div
+        className="speed-vignette-blur"
+        style={{ '--speedfx': String(speedFxAmount) } as { [key: string]: string }}
+      />
+      <button
+        type="button"
+        className="help-toggle"
+        aria-label="Open help"
+        onClick={() => setHelpOpen(true)}
+      >
+        ?
+      </button>
+      {helpOpen ? (
+        <div className="help-overlay" onClick={() => setHelpOpen(false)}>
+          <section
+            className="help-panel"
+            onClick={(event) => event.stopPropagation()}
+            aria-label="Rules and controls"
+          >
+            <button
+              type="button"
+              className="help-panel__close"
+              aria-label="Close help"
+              onClick={() => setHelpOpen(false)}
+            >
+              ×
+            </button>
+            <h2 className="help-panel__title">Help</h2>
+            <div className="help-panel__section">
+              <h3>Rules</h3>
+              <p>The orb appears when at least 2 players are connected, after a 10-second countdown.</p>
+              <p>The holder gains 1 point per second.</p>
+              <p>Touching the holder steals the orb.</p>
+              <p>If the holder crashes, the orb respawns somewhere else.</p>
+            </div>
+            <div className="help-panel__section">
+              <h3>Controls</h3>
+              <p><strong>A</strong> / <strong>←</strong>: turn left</p>
+              <p><strong>D</strong> / <strong>→</strong>: turn right</p>
+              <p><strong>Space</strong>: speedbar</p>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      <TagChaseHud
+        username={hudState.username}
+        holderLabel={hudState.holderLabel}
+        localScore={hudState.localScore}
+        leaderboard={hudState.leaderboard}
+        soundEnabled={varioEnabled}
+        onToggleSound={toggleVario}
+      />
+      {hudState.orbCountdownRemainingMs > 0 ? (
+        <div className="orb-countdown">
+          Orb in {Math.max(1, Math.ceil(hudState.orbCountdownRemainingMs / 1000))}s
+        </div>
+      ) : null}
+      {hudState.waitingForSecondPlayer ? (
+        <div className="waiting-player-hint">
+          Orb match will start when another player joins.
+        </div>
+      ) : null}
     </main>
   )
 }
