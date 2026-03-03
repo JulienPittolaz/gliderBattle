@@ -93,3 +93,20 @@ VITE_GA_MEASUREMENT_ID=G-XXXXXXXXXX
 VITE_ANALYTICS_ENABLED=true
 VITE_ANALYTICS_DEBUG=false
 ```
+
+## Multiplayer Endpoint
+
+The multiplayer client resolves the Colyseus endpoint in this order:
+
+1. `VITE_COLYSEUS_URL` (if set)
+2. Same-origin WebSocket URL based on the current page origin
+   - `https://...` page => `wss://...`
+   - `http://...` page => `ws://...`
+
+This avoids production fallbacks to localhost when no env var is provided.
+
+Example local split setup (Vite frontend + Colyseus backend on port `2567`):
+
+```env
+VITE_COLYSEUS_URL=ws://localhost:2567
+```

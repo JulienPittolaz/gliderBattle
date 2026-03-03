@@ -10,7 +10,6 @@ import type {
   RemotePlayerSnapshot,
 } from './types'
 
-const DEFAULT_ENDPOINT = 'ws://localhost:2567'
 const ROOM_NAME = 'world'
 const SEND_INTERVAL_MS = 50
 
@@ -158,6 +157,19 @@ const toOrbCountdownRemainingMs = (state: unknown): number => {
 
 const randomNickname = () => `Pilot-${Math.floor(Math.random() * 9000 + 1000)}`
 
+const getSameOriginEndpoint = () => {
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${wsProtocol}//${window.location.host}`
+}
+
+const resolveColyseusEndpoint = () => {
+  const configuredEndpoint = import.meta.env.VITE_COLYSEUS_URL?.trim()
+  if (configuredEndpoint) {
+    return configuredEndpoint
+  }
+  return getSameOriginEndpoint()
+}
+
 export const useMultiplayerSession = () => {
   const [session, setSession] = useState<MultiplayerSessionState>({
     connected: false,
@@ -175,7 +187,7 @@ export const useMultiplayerSession = () => {
 
   useEffect(() => {
     let cancelled = false
-    const endpoint = import.meta.env.VITE_COLYSEUS_URL ?? DEFAULT_ENDPOINT
+    const endpoint = resolveColyseusEndpoint()
     const client = new Client(endpoint)
 
     const connect = async () => {
