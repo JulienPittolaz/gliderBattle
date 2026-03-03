@@ -34,6 +34,7 @@ import { TerrainForest } from './TerrainForest'
 import { createProceduralIslandTerrain } from './terrain'
 import { generateThermals } from './thermals'
 import type { ThermalVisualEntry } from './thermals'
+import type { PlayerInput } from './types'
 import type { LeaderboardEntry } from '../net/types'
 import { useMultiplayerSession } from '../net/useMultiplayerSession'
 
@@ -89,6 +90,7 @@ interface GameSceneProps {
   onAirspeed?: (airspeed: number) => void
   onHudStateChange?: (hud: GameHudState) => void
   onSpeedFxAmountChange?: (amount: number) => void
+  mobileInput?: PlayerInput | null
 }
 
 export const GameScene = ({
@@ -96,6 +98,7 @@ export const GameScene = ({
   onAirspeed,
   onHudStateChange,
   onSpeedFxAmountChange,
+  mobileInput = null,
 }: GameSceneProps) => {
   const playerRef = useRef<THREE.Group>(null)
   const fogRef = useRef<THREE.Fog>(null)
@@ -296,6 +299,7 @@ export const GameScene = ({
         terrainHeightAt={terrain.getHeightAt}
         thermals={activeLiftThermals}
         gameSpeed={gameSpeed}
+        inputOverride={mobileInput}
         onPose={multiplayer.setLocalPose}
         onCrash={multiplayer.sendCrash}
         onVerticalSpeed={onVerticalSpeed}

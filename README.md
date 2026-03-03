@@ -71,3 +71,25 @@ export default defineConfig([
   },
 ])
 ```
+
+## Analytics (GA4)
+
+Analytics is initialized from environment variables in `src/analytics/ga.ts`.
+
+- `VITE_GA_MEASUREMENT_ID`: GA4 measurement ID (for example `G-XXXXXXXXXX`).
+- `VITE_ANALYTICS_ENABLED`: optional override (`true` or `false`).
+- `VITE_ANALYTICS_DEBUG`: optional GA debug mode (`true` or `false`).
+
+Default behavior:
+
+- Analytics is enabled when `VITE_GA_MEASUREMENT_ID` is set.
+- It is auto-disabled on localhost (`localhost`, `127.0.0.1`, `[::1]`) unless explicitly enabled with `VITE_ANALYTICS_ENABLED=true`.
+- `VITE_ANALYTICS_ENABLED=false` always disables analytics.
+
+Example `.env.production` or `.env.staging`:
+
+```env
+VITE_GA_MEASUREMENT_ID=G-XXXXXXXXXX
+VITE_ANALYTICS_ENABLED=true
+VITE_ANALYTICS_DEBUG=false
+```

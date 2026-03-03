@@ -25,6 +25,7 @@ import { computeSafeSpawn } from './spawn'
 import type { ThermalColumn } from './thermals'
 import { getThermalLiftAtPoint } from './thermals'
 import { useKeyboard } from './useKeyboard'
+import type { PlayerInput } from './types'
 import type { LocalPoseMessage } from '../net/types'
 
 export interface PlayerProps {
@@ -37,6 +38,7 @@ export interface PlayerProps {
   onVerticalSpeed?: (verticalSpeed: number) => void
   onAirspeed?: (airspeed: number) => void
   onSpeedbarActiveChange?: (active: boolean) => void
+  inputOverride?: PlayerInput | null
 }
 
 export const Player = ({
@@ -49,10 +51,11 @@ export const Player = ({
   onVerticalSpeed,
   onAirspeed,
   onSpeedbarActiveChange,
+  inputOverride = null,
 }: PlayerProps) => {
   const WATER_SURFACE_Y = TERRAIN_WATER_LEVEL
   const WATER_RESPAWN_DEPTH = 0.25
-  const input = useKeyboard()
+  const keyboardInput = useKeyboard()
   const direction = useMemo(() => new THREE.Vector3(), [])
   const initialSpawn = useMemo(
     () => computeSafeSpawn(terrainHeightAt),
@@ -72,6 +75,8 @@ export const Player = ({
     if (!player) {
       return
     }
+
+    const input = inputOverride ?? keyboardInput
 
     const scaledDelta = delta * gameSpeed
 

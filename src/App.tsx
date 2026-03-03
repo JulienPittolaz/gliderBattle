@@ -1,9 +1,12 @@
 import { Canvas } from '@react-three/fiber'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
+import { initAnalytics, trackPageView } from './analytics/ga'
 import './App.css'
 import { GameScene, type GameHudState } from './game/GameScene'
+import { MobileControlsOverlay } from './game/MobileControlsOverlay'
 import { TagChaseHud } from './game/TagChaseHud'
+import type { PlayerInput } from './game/types'
 import { useVarioAudio } from './game/useVarioAudio'
 
 type CanvasDefaults = {
@@ -15,10 +18,17 @@ type CanvasDefaults = {
 
 function App() {
   const PLAYER_JOINED_BANNER_MS = 1200
+  const MOBILE_HINT_MS = 4200
+  const EMPTY_INPUT: PlayerInput = { yawLeft: false, yawRight: false, speedbar: false }
   const [helpOpen, setHelpOpen] = useState(false)
   const [speedFxAmount, setSpeedFxAmount] = useState(0)
+  const [touchDevice, setTouchDevice] = useState(false)
+  const [landscape, setLandscape] = useState(true)
+  const [mobileInput, setMobileInput] = useState<PlayerInput>(EMPTY_INPUT)
+  const [mobileHintVisible, setMobileHintVisible] = useState(false)
   const [playerJoinedBannerVisible, setPlayerJoinedBannerVisible] = useState(false)
   const playerJoinedTimeoutRef = useRef<number | null>(null)
+  const mobileHintTimeoutRef = useRef<number | null>(null)
   const previousCountdownRef = useRef(0)
   const [hudState, setHudState] = useState<GameHudState>({
     username: 'Guest',
@@ -35,33 +45,56 @@ function App() {
     setAirspeed,
   } = useVarioAudio()
 
+  const mobileControlsEnabled = touchDevice && landscape && !helpOpen
+
   useEffect(() => {
-    if (!import.meta.env.PROD) {
+    const updateMobileState = () => {
+      const coarse = window.matchMedia('(pointer: coarse)').matches
+      const touchCapable = coarse || 'ontouchstart' in window || navigator.maxTouchPoints > 0
+      setTouchDevice(touchCapable)
+      setLandscape(window.innerWidth >= window.innerHeight)
+    }
+
+    updateMobileState()
+    window.addEventListener('resize', updateMobileState)
+    window.addEventListener('orientationchange', updateMobileState)
+    return () => {
+      window.removeEventListener('resize', updateMobileState)
+      window.removeEventListener('orientationchange', updateMobileState)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!mobileControlsEnabled) {
+      setMobileInput(EMPTY_INPUT)
+    }
+  }, [mobileControlsEnabled])
+
+  useEffect(() => {
+    if (!mobileControlsEnabled) {
+      setMobileHintVisible(false)
+      if (mobileHintTimeoutRef.current !== null) {
+        window.clearTimeout(mobileHintTimeoutRef.current)
+        mobileHintTimeoutRef.current = null
+      }
       return
     }
 
-    const GA_ID = 'G-CZGSF09Y67'
-    const existing = document.querySelector(`script[data-ga-id="${GA_ID}"]`)
-    if (existing) {
+    setMobileHintVisible(true)
+    if (mobileHintTimeoutRef.current !== null) {
+      window.clearTimeout(mobileHintTimeoutRef.current)
+    }
+    mobileHintTimeoutRef.current = window.setTimeout(() => {
+      setMobileHintVisible(false)
+      mobileHintTimeoutRef.current = null
+    }, MOBILE_HINT_MS)
+  }, [mobileControlsEnabled])
+
+  useEffect(() => {
+    if (!initAnalytics()) {
       return
     }
-
-    const w = window as Window & {
-      dataLayer?: unknown[]
-      gtag?: (...args: unknown[]) => void
-    }
-    w.dataLayer = w.dataLayer ?? []
-    w.gtag = w.gtag ?? ((...args: unknown[]) => {
-      w.dataLayer?.push(args)
-    })
-    w.gtag('js', new Date())
-    w.gtag('config', GA_ID)
-
-    const script = document.createElement('script')
-    script.async = true
-    script.src = `https://www.googletagmanager.com/gtag/js?id=${GA_ID}`
-    script.dataset.gaId = GA_ID
-    document.head.appendChild(script)
+    trackPageView()
   }, [])
 
   useEffect(() => {
@@ -101,6 +134,9 @@ function App() {
     return () => {
       if (playerJoinedTimeoutRef.current !== null) {
         window.clearTimeout(playerJoinedTimeoutRef.current)
+      }
+      if (mobileHintTimeoutRef.current !== null) {
+        window.clearTimeout(mobileHintTimeoutRef.current)
       }
     }
   }, [])
@@ -145,6 +181,7 @@ function App() {
             onAirspeed={setAirspeed}
             onHudStateChange={setHudState}
             onSpeedFxAmountChange={setSpeedFxAmount}
+            mobileInput={mobileControlsEnabled ? mobileInput : null}
           />
         </Canvas>
       </div>
@@ -152,14 +189,40 @@ function App() {
         className="speed-vignette-blur"
         style={{ '--speedfx': String(speedFxAmount) } as { [key: string]: string }}
       />
-      <button
-        type="button"
-        className="help-toggle"
-        aria-label="Open help"
-        onClick={() => setHelpOpen(true)}
-      >
-        ?
-      </button>
+      <div className="hud-actions">
+        <button
+          type="button"
+          className="hud-action-btn help-toggle"
+          aria-label="Open help"
+          onClick={() => setHelpOpen(true)}
+        >
+          ?
+        </button>
+        <button
+          type="button"
+          className="hud-action-btn sound-toggle"
+          aria-label={varioEnabled ? 'Disable sound' : 'Enable sound'}
+          title={varioEnabled ? 'Disable sound' : 'Enable sound'}
+          onClick={toggleVario}
+        >
+          <svg
+            className="sound-toggle__icon"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M4 10h4.6L13 6v12l-4.4-4H4z" />
+            {varioEnabled ? (
+              <>
+                <path d="M16 9.5c1 .8 1.5 1.6 1.5 2.5s-.5 1.7-1.5 2.5" />
+                <path d="M18.6 7.2c1.6 1.3 2.4 2.9 2.4 4.8s-.8 3.5-2.4 4.8" />
+              </>
+            ) : (
+              <path d="M5.3 5.3L18.7 18.7" />
+            )}
+          </svg>
+        </button>
+      </div>
       {helpOpen ? (
         <div className="help-overlay" onClick={() => setHelpOpen(false)}>
           <section
@@ -188,6 +251,7 @@ function App() {
               <p><strong>A</strong> / <strong>←</strong>: turn left</p>
               <p><strong>D</strong> / <strong>→</strong>: turn right</p>
               <p><strong>Space</strong>: speedbar</p>
+              <p><strong>Mobile:</strong> hold left/right side to turn, hold SPEEDBAR button to accelerate.</p>
             </div>
           </section>
         </div>
@@ -197,8 +261,7 @@ function App() {
         holderLabel={hudState.holderLabel}
         localScore={hudState.localScore}
         leaderboard={hudState.leaderboard}
-        soundEnabled={varioEnabled}
-        onToggleSound={toggleVario}
+        compact={touchDevice}
       />
       {playerJoinedBannerVisible ? (
         <div className="orb-countdown orb-join-notice">Player joined</div>
@@ -212,6 +275,15 @@ function App() {
         <div className="waiting-player-hint">
           Orb match will start when another player joins.
         </div>
+      ) : null}
+      {mobileControlsEnabled && mobileHintVisible ? (
+        <div className="mobile-controls-hint">
+          Hold LEFT/RIGHT to steer and hold SPEEDBAR to accelerate.
+        </div>
+      ) : null}
+      <MobileControlsOverlay enabled={mobileControlsEnabled} onInputChange={setMobileInput} />
+      {touchDevice && !landscape ? (
+        <div className="mobile-rotate-hint">Rotate your device to landscape to play.</div>
       ) : null}
     </main>
   )
