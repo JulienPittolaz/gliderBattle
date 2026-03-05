@@ -162,9 +162,23 @@ const getSameOriginEndpoint = () => {
   return `${wsProtocol}//${window.location.host}`
 }
 
+const isLocalHostname = (hostname: string) =>
+  hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
+
 const resolveColyseusEndpoint = () => {
   const configuredEndpoint = import.meta.env.VITE_COLYSEUS_URL?.trim()
   if (configuredEndpoint) {
+    try {
+      const parsed = new URL(configuredEndpoint)
+      if (import.meta.env.PROD && isLocalHostname(parsed.hostname)) {
+        console.warn(
+          `[multiplayer] ignoring localhost VITE_COLYSEUS_URL in production: ${configuredEndpoint}`,
+        )
+        return getSameOriginEndpoint()
+      }
+    } catch {
+      // Keep configured endpoint as-is if URL parsing fails.
+    }
     return configuredEndpoint
   }
   return getSameOriginEndpoint()

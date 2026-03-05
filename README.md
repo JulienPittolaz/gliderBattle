@@ -104,6 +104,7 @@ The multiplayer client resolves the Colyseus endpoint in this order:
    - `http://...` page => `ws://...`
 
 This avoids production fallbacks to localhost when no env var is provided.
+In production builds, localhost endpoints in `VITE_COLYSEUS_URL` are ignored and same-origin is used instead.
 
 Example local split setup (Vite frontend + Colyseus backend on port `2567`):
 
