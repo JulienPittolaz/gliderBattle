@@ -227,9 +227,11 @@ const ensureParentDir = (filePath) => {
 };
 const toSafeFileStem = (value) =>
   value.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "startup";
-const getStartupIconPublicUrl = (filename) => `${STARTUP_ICON_ROUTE_PREFIX}${filename}`;
+const getStartupIconPublicUrl = (startupId) =>
+  startupId ? `${STARTUP_ICON_ROUTE_PREFIX}${encodeURIComponent(startupId)}` : "";
 const getStartupIconDiskPath = (filename) => path.join(STARTUP_ICON_CACHE_DIR, path.basename(filename));
 const hasCachedStartupIcon = (filename) => Boolean(filename) && existsSync(getStartupIconDiskPath(filename));
+const startupIconFetchPromises = new Map();
 const resolveImageExtension = (contentType, imageUrl) => {
   const normalizedContentType = asTrimmedString(contentType).toLowerCase().split(";")[0];
   if (IMAGE_CONTENT_TYPE_EXTENSIONS[normalizedContentType]) {
@@ -266,6 +268,114 @@ const serveStaticFile = (res, targetPath) => {
   } catch {
     res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
     res.end("Failed to serve static file.");
+  }
+};
+
+const sendBuffer = (res, buffer, contentType) => {
+  res.writeHead(200, {
+    "Content-Type": contentType || "application/octet-stream",
+    "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+  });
+  res.end(buffer);
+};
+
+const findStartupById = (startupId) =>
+  startupCatalog.items.find((item) => item.id === startupId) ?? null;
+
+const fetchStartupIconAsset = async (startup) => {
+  const imageSourceUrl = asTrimmedString(startup?.imageSourceUrl);
+  if (!imageSourceUrl) {
+    return null;
+  }
+
+  const response = await fetch(imageSourceUrl, {
+    headers: {
+      Accept: "image/*",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Image ${response.status}: ${imageSourceUrl}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("image/")) {
+    throw new Error(`Unsupported image content type: ${contentType || "unknown"}`);
+  }
+
+  const extension = resolveImageExtension(contentType, imageSourceUrl);
+  const fileStem = toSafeFileStem(startup.id);
+  const fingerprint = crypto.createHash("sha1").update(imageSourceUrl).digest("hex").slice(0, 8);
+  const filename = `${fileStem}-${fingerprint}${extension}`;
+  const buffer = Buffer.from(await response.arrayBuffer());
+
+  return {
+    buffer,
+    contentType,
+    filename,
+  };
+};
+
+const cacheFetchedStartupIcon = (startup, asset) => {
+  if (!startup || !asset?.filename || !asset?.buffer) {
+    return startup;
+  }
+
+  try {
+    const filePath = getStartupIconDiskPath(asset.filename);
+    ensureParentDir(filePath);
+    writeFileSync(filePath, asset.buffer);
+  } catch (error) {
+    console.warn(`[startup-coins] failed to persist icon for ${startup.name}.`, error);
+  }
+
+  const updatedStartup = {
+    ...startup,
+    localIconPath: asset.filename,
+    iconUrl: startup.imageSourceUrl ? getStartupIconPublicUrl(startup.id) : "",
+  };
+  const catalogIndex = startupCatalog.items.findIndex((item) => item.id === startup.id);
+  if (catalogIndex >= 0) {
+    startupCatalog.items[catalogIndex] = updatedStartup;
+  }
+
+  return updatedStartup;
+};
+
+const getOrFetchStartupIconAsset = async (startup) => {
+  if (!startup) {
+    return null;
+  }
+
+  if (hasCachedStartupIcon(startup.localIconPath)) {
+    const filePath = getStartupIconDiskPath(startup.localIconPath);
+    const ext = path.extname(filePath).toLowerCase();
+    return {
+      buffer: readFileSync(filePath),
+      contentType: CONTENT_TYPES[ext] ?? "application/octet-stream",
+      filename: startup.localIconPath,
+    };
+  }
+
+  const existingPromise = startupIconFetchPromises.get(startup.id);
+  if (existingPromise) {
+    return existingPromise;
+  }
+
+  const fetchPromise = (async () => {
+    const asset = await fetchStartupIconAsset(startup);
+    if (!asset) {
+      return null;
+    }
+    cacheFetchedStartupIcon(startup, asset);
+    return asset;
+  })();
+
+  startupIconFetchPromises.set(startup.id, fetchPromise);
+  try {
+    return await fetchPromise;
+  } finally {
+    startupIconFetchPromises.delete(startup.id);
   }
 };
 
@@ -598,9 +708,7 @@ const normalizeStartup = (raw, index) => {
   const imageSourceUrl =
     asTrimmedString(startup.imageSourceUrl) || resolveStartupImageUrl(startup);
   const localIconPath = asTrimmedString(startup.localIconPath);
-  const iconUrl = hasCachedStartupIcon(localIconPath)
-    ? getStartupIconPublicUrl(localIconPath)
-    : "";
+  const iconUrl = imageSourceUrl ? getStartupIconPublicUrl(startupId) : "";
 
   if (!startupId || isAnonymousStartupName(name)) {
     return null;
@@ -694,7 +802,7 @@ const hydrateCachedStartupIcons = (items) =>
     return {
       ...item,
       localIconPath,
-      iconUrl: hasCachedStartupIcon(localIconPath) ? getStartupIconPublicUrl(localIconPath) : "",
+      iconUrl: item.imageSourceUrl ? getStartupIconPublicUrl(item.id) : "",
     };
   });
 
@@ -707,39 +815,16 @@ const cacheStartupIcon = async (startup) => {
   if (hasCachedStartupIcon(startup.localIconPath)) {
     return {
       ...startup,
-      iconUrl: getStartupIconPublicUrl(startup.localIconPath),
+      iconUrl: getStartupIconPublicUrl(startup.id),
     };
   }
 
-  const response = await fetch(imageSourceUrl, {
-    headers: {
-      Accept: "image/*",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Image ${response.status}: ${imageSourceUrl}`);
+  const asset = await fetchStartupIconAsset(startup);
+  if (!asset) {
+    return startup;
   }
 
-  const contentType = response.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().startsWith("image/")) {
-    throw new Error(`Unsupported image content type: ${contentType || "unknown"}`);
-  }
-
-  const extension = resolveImageExtension(contentType, imageSourceUrl);
-  const fileStem = toSafeFileStem(startup.id);
-  const fingerprint = crypto.createHash("sha1").update(imageSourceUrl).digest("hex").slice(0, 8);
-  const filename = `${fileStem}-${fingerprint}${extension}`;
-  const filePath = getStartupIconDiskPath(filename);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  ensureParentDir(filePath);
-  writeFileSync(filePath, bytes);
-
-  return {
-    ...startup,
-    localIconPath: filename,
-    iconUrl: getStartupIconPublicUrl(filename),
-  };
+  return cacheFetchedStartupIcon(startup, asset);
 };
 
 const cacheStartupIcons = async (items, maxDownloads) => {
@@ -750,9 +835,7 @@ const cacheStartupIcons = async (items, maxDownloads) => {
     if (hasCachedStartupIcon(item.localIconPath) || !item.imageSourceUrl || downloadsUsed >= maxDownloads) {
       output.push({
         ...item,
-        iconUrl: hasCachedStartupIcon(item.localIconPath)
-          ? getStartupIconPublicUrl(item.localIconPath)
-          : "",
+        iconUrl: item.imageSourceUrl ? getStartupIconPublicUrl(item.id) : "",
       });
       continue;
     }
@@ -766,7 +849,7 @@ const cacheStartupIcons = async (items, maxDownloads) => {
       output.push({
         ...item,
         localIconPath: "",
-        iconUrl: "",
+        iconUrl: item.imageSourceUrl ? getStartupIconPublicUrl(item.id) : "",
       });
       downloadsUsed += 1;
     }
@@ -1722,18 +1805,45 @@ class WorldRoom extends Room {
   }
 }
 
-const httpServer = createServer((req, res) => {
+const httpServer = createServer(async (req, res) => {
   if (req.url) {
     const url = new URL(req.url, "http://localhost");
     if (url.pathname.startsWith(STARTUP_ICON_ROUTE_PREFIX)) {
-      const filename = path.basename(url.pathname.slice(STARTUP_ICON_ROUTE_PREFIX.length));
-      if (!filename) {
+      const startupId = decodeURIComponent(url.pathname.slice(STARTUP_ICON_ROUTE_PREFIX.length));
+      if (!startupId) {
         res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
         res.end("Not found.");
         return;
       }
-      serveStaticFile(res, getStartupIconDiskPath(filename));
-      return;
+
+      const startup = findStartupById(startupId);
+      if (!startup || !startup.imageSourceUrl) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Not found.");
+        return;
+      }
+
+      try {
+        if (hasCachedStartupIcon(startup.localIconPath)) {
+          serveStaticFile(res, getStartupIconDiskPath(startup.localIconPath));
+          return;
+        }
+
+        const asset = await getOrFetchStartupIconAsset(startup);
+        if (!asset) {
+          res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end("Not found.");
+          return;
+        }
+
+        sendBuffer(res, asset.buffer, asset.contentType);
+        return;
+      } catch (error) {
+        console.warn(`[startup-coins] failed to serve icon for ${startup.name}.`, error);
+        res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Failed to fetch startup icon.");
+        return;
+      }
     }
   }
   serveDist(req, res);
