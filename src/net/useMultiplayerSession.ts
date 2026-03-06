@@ -6,15 +6,45 @@ import type {
   LocalPoseMessage,
   MultiplayerSessionState,
   OrbSnapshot,
+  PickupNotificationSnapshot,
   PlayerSnapshot,
+  PlayerEffectSnapshot,
   RemotePlayerSnapshot,
+  StartupCoinSnapshot,
 } from './types'
 
 const ROOM_NAME = 'world'
 const SEND_INTERVAL_MS = 50
+const LOCAL_COLYSEUS_PORT = '2567'
 
 const asNumber = (value: unknown, fallback = 0) =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
+
+const toPickupNotification = (state: unknown): PickupNotificationSnapshot | null => {
+  if (!state || typeof state !== 'object') {
+    return null
+  }
+
+  const source = state as Record<string, unknown>
+  const seq = asNumber(source.lastCoinPickupSeq)
+  if (seq <= 0) {
+    return null
+  }
+
+  return {
+    seq,
+    growthPct: asNumber(source.lastCoinPickupPct),
+    pickedAtMs: asNumber(source.lastCoinPickupAtMs),
+    startupName: typeof source.lastCoinPickupStartupName === 'string' ? source.lastCoinPickupStartupName : '',
+  }
+}
+
+const toPlayerEffect = (state: unknown): PlayerEffectSnapshot => ({
+  active: Boolean((state as { speedEffectActive?: unknown })?.speedEffectActive),
+  speedPct: asNumber((state as { speedEffectPct?: unknown })?.speedEffectPct),
+  endsAtMs: asNumber((state as { speedEffectEndsAtMs?: unknown })?.speedEffectEndsAtMs),
+  pickup: toPickupNotification(state),
+})
 
 const toThermals = (state: unknown): ThermalColumn[] | null => {
   if (!state || typeof state !== 'object') {
@@ -89,6 +119,7 @@ const toPlayers = (
       speedbar: Boolean(p.speedbar),
       currentOrbScore: asNumber(p.currentOrbScore, asNumber(p.score, 0)),
       bestOrbScore: asNumber(p.bestOrbScore, asNumber(p.score, 0)),
+      effect: toPlayerEffect(p),
     })
   }
 
@@ -124,6 +155,48 @@ const toOrb = (state: unknown): OrbSnapshot | null => {
     holderSessionId: typeof source.holderSessionId === 'string' ? source.holderSessionId : '',
     lastTransferAtMs: asNumber(source.lastTransferAtMs),
   }
+}
+
+const toCoins = (state: unknown): StartupCoinSnapshot[] => {
+  if (!state || typeof state !== 'object') {
+    return []
+  }
+
+  const source = (state as { coins?: unknown }).coins
+  if (!source || typeof source !== 'object') {
+    return []
+  }
+
+  const values = Array.isArray(source)
+    ? source
+    : Array.from((source as { values?: () => Iterable<unknown> }).values?.() ?? [])
+
+  const output: StartupCoinSnapshot[] = []
+  for (const coin of values) {
+    if (!coin || typeof coin !== 'object') {
+      continue
+    }
+    const c = coin as Record<string, unknown>
+    const id = typeof c.id === 'string' ? c.id : ''
+    const startupId = typeof c.startupId === 'string' ? c.startupId : ''
+    if (!id || !startupId) {
+      continue
+    }
+    output.push({
+      id,
+      startupId,
+      name: typeof c.name === 'string' ? c.name : startupId,
+      iconUrl: typeof c.iconUrl === 'string' ? c.iconUrl : '',
+      growth30d: asNumber(c.growth30d),
+      x: asNumber(c.x),
+      y: asNumber(c.y),
+      z: asNumber(c.z),
+      spawnedAtMs: asNumber(c.spawnedAtMs),
+      expiresAtMs: asNumber(c.expiresAtMs),
+    })
+  }
+
+  return output
 }
 
 const toLeaderboard = (players: PlayerSnapshot[]): LeaderboardEntry[] =>
@@ -162,6 +235,11 @@ const getSameOriginEndpoint = () => {
   return `${wsProtocol}//${window.location.host}`
 }
 
+const getLocalDevEndpoint = () => {
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${wsProtocol}//${window.location.hostname}:${LOCAL_COLYSEUS_PORT}`
+}
+
 const isLocalHostname = (hostname: string) =>
   hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]'
 
@@ -181,6 +259,9 @@ const resolveColyseusEndpoint = () => {
     }
     return configuredEndpoint
   }
+  if (import.meta.env.DEV && isLocalHostname(window.location.hostname) && window.location.port !== LOCAL_COLYSEUS_PORT) {
+    return getLocalDevEndpoint()
+  }
   return getSameOriginEndpoint()
 }
 
@@ -192,6 +273,7 @@ export const useMultiplayerSession = () => {
     remotePlayers: [],
     thermals: null,
     orb: null,
+    coins: [],
     orbActive: false,
     orbCountdownRemainingMs: 0,
     leaderboard: [],
@@ -233,6 +315,7 @@ export const useMultiplayerSession = () => {
             remotePlayers: toRemotePlayers(players, room.sessionId, receivedAtMs),
             thermals: toThermals(state),
             orb: toOrb(state),
+            coins: toCoins(state),
             orbActive: toOrbActive(state),
             orbCountdownRemainingMs: toOrbCountdownRemainingMs(state),
             leaderboard: toLeaderboard(players),
@@ -250,6 +333,7 @@ export const useMultiplayerSession = () => {
             remotePlayers: [],
             thermals: null,
             orb: null,
+            coins: [],
             orbActive: false,
             orbCountdownRemainingMs: 0,
             leaderboard: [],

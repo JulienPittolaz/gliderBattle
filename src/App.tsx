@@ -16,10 +16,23 @@ type CanvasDefaults = {
   alpha: boolean
 }
 
+type PickupToast = {
+  seq: number
+  growthPct: number
+  startupName: string
+}
+
+const EMPTY_INPUT: PlayerInput = { yawLeft: false, yawRight: false, speedbar: false }
+
+const formatSignedPercent = (value: number) => {
+  const rounded = Math.round(value * 100) / 100
+  const formatted = Number.isInteger(rounded) ? rounded.toFixed(0) : rounded.toFixed(2)
+  return `${rounded > 0 ? '+' : ''}${formatted}%`
+}
+
 function App() {
   const PLAYER_JOINED_BANNER_MS = 1200
   const MOBILE_HINT_MS = 4200
-  const EMPTY_INPUT: PlayerInput = { yawLeft: false, yawRight: false, speedbar: false }
   const [helpOpen, setHelpOpen] = useState(false)
   const [speedFxAmount, setSpeedFxAmount] = useState(0)
   const [touchDevice, setTouchDevice] = useState(false)
@@ -27,8 +40,10 @@ function App() {
   const [mobileInput, setMobileInput] = useState<PlayerInput>(EMPTY_INPUT)
   const [mobileHintVisible, setMobileHintVisible] = useState(false)
   const [playerJoinedBannerVisible, setPlayerJoinedBannerVisible] = useState(false)
+  const [pickupToast, setPickupToast] = useState<PickupToast | null>(null)
   const playerJoinedTimeoutRef = useRef<number | null>(null)
   const mobileHintTimeoutRef = useRef<number | null>(null)
+  const pickupToastTimeoutRef = useRef<number | null>(null)
   const previousCountdownRef = useRef(0)
   const [hudState, setHudState] = useState<GameHudState>({
     username: 'Guest',
@@ -37,6 +52,7 @@ function App() {
     leaderboard: [],
     orbCountdownRemainingMs: 0,
     waitingForSecondPlayer: false,
+    pickupNotification: null,
   })
   const {
     enabled: varioEnabled,
@@ -131,12 +147,37 @@ function App() {
   }, [hudState.orbCountdownRemainingMs])
 
   useEffect(() => {
+    const pickup = hudState.pickupNotification
+    if (!pickup) {
+      return
+    }
+
+    setPickupToast({
+      seq: pickup.seq,
+      growthPct: pickup.growthPct,
+      startupName: pickup.startupName,
+    })
+
+    if (pickupToastTimeoutRef.current !== null) {
+      window.clearTimeout(pickupToastTimeoutRef.current)
+    }
+
+    pickupToastTimeoutRef.current = window.setTimeout(() => {
+      setPickupToast((current) => (current?.seq === pickup.seq ? null : current))
+      pickupToastTimeoutRef.current = null
+    }, Math.max(0, pickup.endsAtMs - Date.now()))
+  }, [hudState.pickupNotification])
+
+  useEffect(() => {
     return () => {
       if (playerJoinedTimeoutRef.current !== null) {
         window.clearTimeout(playerJoinedTimeoutRef.current)
       }
       if (mobileHintTimeoutRef.current !== null) {
         window.clearTimeout(mobileHintTimeoutRef.current)
+      }
+      if (pickupToastTimeoutRef.current !== null) {
+        window.clearTimeout(pickupToastTimeoutRef.current)
       }
     }
   }, [])
@@ -189,6 +230,17 @@ function App() {
         className="speed-vignette-blur"
         style={{ '--speedfx': String(speedFxAmount) } as { [key: string]: string }}
       />
+      <div className="trustmrr-credit">
+        Booster coins are provided by{' '}
+        <a
+          href="https://trustmrr.com/"
+          target="_blank"
+          rel="noreferrer"
+          className="trustmrr-credit__link"
+        >
+          TrustMRR
+        </a>
+      </div>
       <div className="hud-actions">
         <button
           type="button"
@@ -245,6 +297,7 @@ function App() {
               <p>The holder gains 1 point per second.</p>
               <p>Touching the holder steals the orb.</p>
               <p>If the holder crashes, the orb respawns somewhere else.</p>
+              <p>Startup coins spawn around the island every 5 seconds and give a 3-second speed bonus or malus.</p>
             </div>
             <div className="help-panel__section">
               <h3>Controls</h3>
@@ -279,6 +332,13 @@ function App() {
       {mobileControlsEnabled && mobileHintVisible ? (
         <div className="mobile-controls-hint">
           Hold LEFT/RIGHT to steer and hold SPEEDBAR to accelerate.
+        </div>
+      ) : null}
+      {pickupToast ? (
+        <div
+          className={`pickup-toast${pickupToast.growthPct > 0 ? ' pickup-toast--positive' : ''}${pickupToast.growthPct < 0 ? ' pickup-toast--negative' : ''}`}
+        >
+          {formatSignedPercent(pickupToast.growthPct)} by {pickupToast.startupName || 'Unknown'}
         </div>
       ) : null}
       <MobileControlsOverlay enabled={mobileControlsEnabled} onInputChange={setMobileInput} />

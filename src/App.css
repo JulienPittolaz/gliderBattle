@@ -172,6 +172,29 @@
   background: rgba(12, 20, 32, 0.5);
 }
 
+.trustmrr-credit {
+  position: fixed;
+  top: 0.9rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  color: #ffffff;
+  font-size: 0.92rem;
+  line-height: 1.2;
+  text-align: center;
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
+}
+
+.trustmrr-credit__link {
+  color: #ffffff;
+  text-decoration: underline;
+  text-underline-offset: 0.14em;
+}
+
+.trustmrr-credit__link:visited {
+  color: #ffffff;
+}
+
 .waiting-player-hint {
   position: fixed;
   left: 1rem;
@@ -182,6 +205,48 @@
   letter-spacing: 0.01em;
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
   pointer-events: none;
+}
+
+.pickup-toast {
+  position: fixed;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  z-index: 4;
+  pointer-events: none;
+  padding: 0.45rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(20, 40, 68, 0.76);
+  color: #e8f4ff;
+  font-size: 1.55rem;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 16px 36px rgba(4, 10, 20, 0.2);
+  backdrop-filter: blur(7px);
+  animation: pickup-toast-pop 0.18s ease-out;
+}
+
+.pickup-toast--positive {
+  background: rgba(12, 71, 33, 0.8);
+  color: #bcffd5;
+}
+
+.pickup-toast--negative {
+  background: rgba(105, 20, 20, 0.82);
+  color: #ffcbcb;
+}
+
+@keyframes pickup-toast-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
 }
 
 .tag-hud {

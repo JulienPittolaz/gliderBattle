@@ -29,6 +29,7 @@ import { useMultiplayerDebug } from './MultiplayerDebug'
 import { Player } from './Player'
 import { Orb } from './Orb'
 import { RemotePlayers } from './RemotePlayers'
+import { StartupCoins } from './StartupCoins'
 import { ThermalField } from './ThermalField'
 import { TerrainForest } from './TerrainForest'
 import { createProceduralIslandTerrain } from './terrain'
@@ -83,6 +84,12 @@ export interface GameHudState {
   leaderboard: LeaderboardEntry[]
   orbCountdownRemainingMs: number
   waitingForSecondPlayer: boolean
+  pickupNotification: {
+    seq: number
+    growthPct: number
+    endsAtMs: number
+    startupName: string
+  } | null
 }
 
 interface GameSceneProps {
@@ -114,6 +121,7 @@ export const GameScene = ({
   const { shaderConfig } = useThermalShaderDebug()
   const multiplayer = useMultiplayerSession()
   const [thermalSeedStep, setThermalSeedStep] = useState(0)
+  const [nowSeconds, setNowSeconds] = useState(() => Date.now() * 0.001)
   const speedFxTargetRef = useRef(0)
   const speedFxAmountRef = useRef(0)
   const lastSpeedFxSentRef = useRef(-1)
@@ -129,6 +137,12 @@ export const GameScene = ({
   )
   const thermals = multiplayer.thermals ?? localThermals
   const players = multiplayer.players
+  const localPlayer = useMemo(() => {
+    if (!multiplayer.localSessionId) {
+      return null
+    }
+    return players.find((player) => player.sessionId === multiplayer.localSessionId) ?? null
+  }, [multiplayer.localSessionId, players])
   const holderLabel = useMemo(() => {
     const holderSessionId = multiplayer.orb?.holderSessionId ?? ''
     if (!holderSessionId) {
@@ -137,20 +151,23 @@ export const GameScene = ({
     const holder = players.find((player) => player.sessionId === holderSessionId)
     return holder?.nickname ?? 'Nobody'
   }, [multiplayer.orb?.holderSessionId, players])
-  const localScore = useMemo(() => {
-    if (!multiplayer.localSessionId) {
-      return 0
+  const localScore = localPlayer?.currentOrbScore ?? 0
+  const localUsername = localPlayer?.nickname ?? 'Guest'
+  const localPickupSeq = localPlayer?.effect.pickup?.seq ?? 0
+  const localPickupGrowthPct = localPlayer?.effect.pickup?.growthPct ?? 0
+  const localPickupEndsAtMs = localPlayer?.effect.endsAtMs ?? 0
+  const localPickupStartupName = localPlayer?.effect.pickup?.startupName ?? ''
+  const localPickupNotification = useMemo(() => {
+    if (localPickupSeq <= 0) {
+      return null
     }
-    const localPlayer = players.find((player) => player.sessionId === multiplayer.localSessionId)
-    return localPlayer?.currentOrbScore ?? 0
-  }, [multiplayer.localSessionId, players])
-  const localUsername = useMemo(() => {
-    if (!multiplayer.localSessionId) {
-      return 'Guest'
+    return {
+      seq: localPickupSeq,
+      growthPct: localPickupGrowthPct,
+      endsAtMs: localPickupEndsAtMs,
+      startupName: localPickupStartupName,
     }
-    const localPlayer = players.find((player) => player.sessionId === multiplayer.localSessionId)
-    return localPlayer?.nickname ?? 'Guest'
-  }, [multiplayer.localSessionId, players])
+  }, [localPickupEndsAtMs, localPickupGrowthPct, localPickupSeq, localPickupStartupName])
 
   useEffect(() => {
     onHudStateChange?.({
@@ -160,11 +177,13 @@ export const GameScene = ({
       leaderboard: multiplayer.leaderboard,
       orbCountdownRemainingMs: multiplayer.connected ? multiplayer.orbCountdownRemainingMs : 0,
       waitingForSecondPlayer: multiplayer.connected && multiplayer.players.length === 1,
+      pickupNotification: localPickupNotification,
     })
   }, [
     holderLabel,
     localScore,
     localUsername,
+    localPickupNotification,
     multiplayer.connected,
     multiplayer.players.length,
     multiplayer.leaderboard,
@@ -181,14 +200,13 @@ export const GameScene = ({
     }))
   })
   const activeLiftThermals = useMemo(() => {
-    const now = Date.now() * 0.001
     return thermalVisuals
       .filter(
         (entry) =>
-          entry.disappearAt === null || now - entry.disappearAt <= THERMAL_FADE_OUT_SECONDS,
+          entry.disappearAt === null || nowSeconds - entry.disappearAt <= THERMAL_FADE_OUT_SECONDS,
       )
       .map((entry) => entry.thermal)
-  }, [thermalVisuals])
+  }, [nowSeconds, thermalVisuals])
 
   useEffect(() => {
     const now = Date.now() * 0.001
@@ -236,6 +254,7 @@ export const GameScene = ({
   useEffect(() => {
     const timer = window.setInterval(() => {
       const now = Date.now() * 0.001
+      setNowSeconds(now)
       setThermalVisuals((previous) =>
         previous.filter(
           (entry) =>
@@ -299,6 +318,7 @@ export const GameScene = ({
         terrainHeightAt={terrain.getHeightAt}
         thermals={activeLiftThermals}
         gameSpeed={gameSpeed}
+        speedEffectPct={localPlayer?.effect.active ? localPlayer.effect.speedPct : 0}
         inputOverride={mobileInput}
         onPose={multiplayer.setLocalPose}
         onCrash={multiplayer.sendCrash}
@@ -309,6 +329,7 @@ export const GameScene = ({
         }}
       />
       <Orb orb={multiplayer.connected && multiplayer.orbActive ? multiplayer.orb : null} />
+      <StartupCoins coins={multiplayer.connected ? multiplayer.coins : []} />
       <RemotePlayers
         players={multiplayer.remotePlayers}
         smoothingMode={multiplayerDebug.smoothingMode}

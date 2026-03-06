@@ -33,6 +33,7 @@ export interface PlayerProps {
   terrainHeightAt?: (x: number, z: number) => number
   thermals?: ThermalColumn[]
   gameSpeed?: number
+  speedEffectPct?: number
   onPose?: (pose: LocalPoseMessage) => void
   onCrash?: () => void
   onVerticalSpeed?: (verticalSpeed: number) => void
@@ -46,6 +47,7 @@ export const Player = ({
   terrainHeightAt,
   thermals = [],
   gameSpeed = 1,
+  speedEffectPct = 0,
   onPose,
   onCrash,
   onVerticalSpeed,
@@ -98,7 +100,8 @@ export const Player = ({
     direction.applyAxisAngle(THREE.Object3D.DEFAULT_UP, yawRef.current)
     direction.normalize()
 
-    const currentSpeed = FORWARD_SPEED + (input.speedbar ? SPEEDBAR_BOOST : 0)
+    const baseSpeed = FORWARD_SPEED + (input.speedbar ? SPEEDBAR_BOOST : 0)
+    const currentSpeed = baseSpeed * (1 + speedEffectPct / 100)
     const currentSink = SINK_RATE + (input.speedbar ? SPEEDBAR_SINK_BOOST : 0)
     const distanceFromCenter = Math.hypot(player.position.x, player.position.z)
     const edgeSinkT = THREE.MathUtils.clamp(
