@@ -84,6 +84,11 @@ export interface GameHudState {
   leaderboard: LeaderboardEntry[]
   orbCountdownRemainingMs: number
   waitingForSecondPlayer: boolean
+  mapCoinNotification: {
+    id: string
+    startupName: string
+    growthPct: number
+  } | null
   pickupNotification: {
     seq: number
     growthPct: number
@@ -122,9 +127,14 @@ export const GameScene = ({
   const multiplayer = useMultiplayerSession()
   const [thermalSeedStep, setThermalSeedStep] = useState(0)
   const [nowSeconds, setNowSeconds] = useState(() => Date.now() * 0.001)
+  const [mapCoinNotification, setMapCoinNotification] = useState<GameHudState['mapCoinNotification']>(
+    null,
+  )
   const speedFxTargetRef = useRef(0)
   const speedFxAmountRef = useRef(0)
   const lastSpeedFxSentRef = useRef(-1)
+  const previousCoinIdsRef = useRef<Set<string>>(new Set())
+  const initializedCoinIdsRef = useRef(false)
   const localThermals = useMemo(
     () =>
       generateThermals(
@@ -177,12 +187,14 @@ export const GameScene = ({
       leaderboard: multiplayer.leaderboard,
       orbCountdownRemainingMs: multiplayer.connected ? multiplayer.orbCountdownRemainingMs : 0,
       waitingForSecondPlayer: multiplayer.connected && multiplayer.players.length === 1,
+      mapCoinNotification,
       pickupNotification: localPickupNotification,
     })
   }, [
     holderLabel,
     localScore,
     localUsername,
+    mapCoinNotification,
     localPickupNotification,
     multiplayer.connected,
     multiplayer.players.length,
@@ -190,6 +202,38 @@ export const GameScene = ({
     multiplayer.orbCountdownRemainingMs,
     onHudStateChange,
   ])
+
+  useEffect(() => {
+    if (!multiplayer.connected) {
+      previousCoinIdsRef.current = new Set()
+      initializedCoinIdsRef.current = false
+      setMapCoinNotification(null)
+      return
+    }
+
+    const currentCoins = multiplayer.coins
+    const currentIds = new Set(currentCoins.map((coin) => coin.id))
+
+    if (!initializedCoinIdsRef.current) {
+      initializedCoinIdsRef.current = true
+      previousCoinIdsRef.current = currentIds
+      return
+    }
+
+    const newCoins = currentCoins.filter((coin) => !previousCoinIdsRef.current.has(coin.id))
+    previousCoinIdsRef.current = currentIds
+
+    if (newCoins.length === 0) {
+      return
+    }
+
+    const latestCoin = newCoins[newCoins.length - 1]
+    setMapCoinNotification({
+      id: latestCoin.id,
+      startupName: latestCoin.name,
+      growthPct: latestCoin.growth30d,
+    })
+  }, [multiplayer.coins, multiplayer.connected])
   const [thermalVisuals, setThermalVisuals] = useState<ThermalVisualEntry[]>(() => {
     return thermals.map((thermal) => ({
       id: thermal.id,

@@ -22,6 +22,12 @@ type PickupToast = {
   startupName: string
 }
 
+type MapCoinToast = {
+  id: string
+  startupName: string
+  growthPct: number
+}
+
 const EMPTY_INPUT: PlayerInput = { yawLeft: false, yawRight: false, speedbar: false }
 
 const formatSignedPercent = (value: number) => {
@@ -33,6 +39,7 @@ const formatSignedPercent = (value: number) => {
 function App() {
   const PLAYER_JOINED_BANNER_MS = 1200
   const MOBILE_HINT_MS = 4200
+  const MAP_COIN_TOAST_MS = 3200
   const [helpOpen, setHelpOpen] = useState(false)
   const [speedFxAmount, setSpeedFxAmount] = useState(0)
   const [touchDevice, setTouchDevice] = useState(false)
@@ -41,9 +48,11 @@ function App() {
   const [mobileHintVisible, setMobileHintVisible] = useState(false)
   const [playerJoinedBannerVisible, setPlayerJoinedBannerVisible] = useState(false)
   const [pickupToast, setPickupToast] = useState<PickupToast | null>(null)
+  const [mapCoinToast, setMapCoinToast] = useState<MapCoinToast | null>(null)
   const playerJoinedTimeoutRef = useRef<number | null>(null)
   const mobileHintTimeoutRef = useRef<number | null>(null)
   const pickupToastTimeoutRef = useRef<number | null>(null)
+  const mapCoinToastTimeoutRef = useRef<number | null>(null)
   const previousCountdownRef = useRef(0)
   const [hudState, setHudState] = useState<GameHudState>({
     username: 'Guest',
@@ -52,6 +61,7 @@ function App() {
     leaderboard: [],
     orbCountdownRemainingMs: 0,
     waitingForSecondPlayer: false,
+    mapCoinNotification: null,
     pickupNotification: null,
   })
   const {
@@ -147,6 +157,22 @@ function App() {
   }, [hudState.orbCountdownRemainingMs])
 
   useEffect(() => {
+    const mapCoin = hudState.mapCoinNotification
+    if (!mapCoin) {
+      return
+    }
+
+    setMapCoinToast(mapCoin)
+    if (mapCoinToastTimeoutRef.current !== null) {
+      window.clearTimeout(mapCoinToastTimeoutRef.current)
+    }
+    mapCoinToastTimeoutRef.current = window.setTimeout(() => {
+      setMapCoinToast((current) => (current?.id === mapCoin.id ? null : current))
+      mapCoinToastTimeoutRef.current = null
+    }, MAP_COIN_TOAST_MS)
+  }, [MAP_COIN_TOAST_MS, hudState.mapCoinNotification])
+
+  useEffect(() => {
     const pickup = hudState.pickupNotification
     if (!pickup) {
       return
@@ -178,6 +204,9 @@ function App() {
       }
       if (pickupToastTimeoutRef.current !== null) {
         window.clearTimeout(pickupToastTimeoutRef.current)
+      }
+      if (mapCoinToastTimeoutRef.current !== null) {
+        window.clearTimeout(mapCoinToastTimeoutRef.current)
       }
     }
   }, [])
@@ -327,6 +356,12 @@ function App() {
       {hudState.waitingForSecondPlayer ? (
         <div className="waiting-player-hint">
           Orb match will start when another player joins.
+        </div>
+      ) : null}
+      {mapCoinToast ? (
+        <div className="map-coin-toast">
+          {mapCoinToast.startupName} ({formatSignedPercent(mapCoinToast.growthPct)} this month)
+          {' '}spawned on the map
         </div>
       ) : null}
       {mobileControlsEnabled && mobileHintVisible ? (
