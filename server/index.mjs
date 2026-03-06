@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import colyseusPkg from "colyseus";
 import * as schemaPkg from "@colyseus/schema";
@@ -12,6 +13,7 @@ const __dirname = path.dirname(__filename);
 const DIST_DIR = path.resolve(__dirname, "../dist");
 const ENV_FILE_PATH = path.resolve(__dirname, "../.env");
 const DEFAULT_STARTUP_CACHE_PATH = path.resolve(__dirname, "./startup-cache.json");
+const DEFAULT_STARTUP_ICON_CACHE_DIR = path.resolve(__dirname, "./startup-icons");
 
 const loadEnvFile = (filePath) => {
   if (!existsSync(filePath)) {
@@ -127,6 +129,13 @@ const TRUSTMRR_SITE_ORIGIN = (() => {
 const TRUSTMRR_PAGE_LIMIT = 50;
 const STARTUP_CACHE_FILE_PATH =
   process.env.TRUSTMRR_CACHE_FILE_PATH?.trim() || DEFAULT_STARTUP_CACHE_PATH;
+const STARTUP_ICON_CACHE_DIR =
+  process.env.TRUSTMRR_ICON_CACHE_DIR?.trim() || DEFAULT_STARTUP_ICON_CACHE_DIR;
+const STARTUP_ICON_ROUTE_PREFIX = "/startup-icons/";
+const STARTUP_ICON_SYNC_MAX_DOWNLOADS = Math.max(
+  1,
+  Math.floor(Number(process.env.TRUSTMRR_ICON_SYNC_MAX_DOWNLOADS ?? 48)),
+);
 const STARTUP_RECENT_HISTORY_SIZE = 18;
 const STARTUP_MIN_GAMEPLAY_GROWTH_PCT = 3;
 
@@ -160,6 +169,17 @@ const CONTENT_TYPES = {
   ".ico": "image/x-icon",
   ".woff": "font/woff",
   ".woff2": "font/woff2",
+};
+
+const IMAGE_CONTENT_TYPE_EXTENSIONS = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/webp": ".webp",
+  "image/gif": ".gif",
+  "image/svg+xml": ".svg",
+  "image/x-icon": ".ico",
+  "image/vnd.microsoft.icon": ".ico",
 };
 
 const startupCatalog = {
@@ -205,6 +225,49 @@ const isProduction = APP_ENV === "production";
 const ensureParentDir = (filePath) => {
   mkdirSync(path.dirname(filePath), { recursive: true });
 };
+const toSafeFileStem = (value) =>
+  value.replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "startup";
+const getStartupIconPublicUrl = (filename) => `${STARTUP_ICON_ROUTE_PREFIX}${filename}`;
+const getStartupIconDiskPath = (filename) => path.join(STARTUP_ICON_CACHE_DIR, path.basename(filename));
+const hasCachedStartupIcon = (filename) => Boolean(filename) && existsSync(getStartupIconDiskPath(filename));
+const resolveImageExtension = (contentType, imageUrl) => {
+  const normalizedContentType = asTrimmedString(contentType).toLowerCase().split(";")[0];
+  if (IMAGE_CONTENT_TYPE_EXTENSIONS[normalizedContentType]) {
+    return IMAGE_CONTENT_TYPE_EXTENSIONS[normalizedContentType];
+  }
+
+  try {
+    const pathname = new URL(imageUrl).pathname.toLowerCase();
+    const ext = path.extname(pathname);
+    if (CONTENT_TYPES[ext]?.startsWith("image/")) {
+      return ext;
+    }
+  } catch {
+    // Ignore malformed URL while deriving extension.
+  }
+
+  return ".png";
+};
+
+const serveStaticFile = (res, targetPath) => {
+  if (!existsSync(targetPath)) {
+    res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Not found.");
+    return;
+  }
+
+  const ext = path.extname(targetPath).toLowerCase();
+  const contentType = CONTENT_TYPES[ext] ?? "application/octet-stream";
+
+  try {
+    const content = readFileSync(targetPath);
+    res.writeHead(200, { "Content-Type": contentType });
+    res.end(content);
+  } catch {
+    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Failed to serve static file.");
+  }
+};
 
 const serveDist = (req, res) => {
   if (!req.url) {
@@ -235,17 +298,7 @@ const serveDist = (req, res) => {
     return;
   }
 
-  const ext = path.extname(targetPath).toLowerCase();
-  const contentType = CONTENT_TYPES[ext] ?? "application/octet-stream";
-
-  try {
-    const content = readFileSync(targetPath);
-    res.writeHead(200, { "Content-Type": contentType });
-    res.end(content);
-  } catch {
-    res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Failed to serve static file.");
-  }
+  serveStaticFile(res, targetPath);
 };
 
 const createRng = (seed) => {
@@ -521,6 +574,17 @@ const resolveStartupImageUrl = (startup) => {
   return "";
 };
 
+const isAnonymousStartupName = (value) => {
+  const normalized = asTrimmedString(value).toLowerCase();
+  return (
+    normalized === "" ||
+    normalized === "anonymous" ||
+    normalized === "anonymous startup" ||
+    normalized === "startup" ||
+    normalized === "unknown"
+  );
+};
+
 const normalizeStartup = (raw, index) => {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -529,19 +593,24 @@ const normalizeStartup = (raw, index) => {
   const startup = raw;
   const startupId =
     asTrimmedString(startup.id) ||
-    asTrimmedString(startup.slug) ||
-    asTrimmedString(startup.name) ||
-    `startup-${index}`;
-  const name = asTrimmedString(startup.name) || startupId;
-  const iconUrl = resolveStartupImageUrl(startup);
+    asTrimmedString(startup.slug);
+  const name = asTrimmedString(startup.name);
+  const imageSourceUrl =
+    asTrimmedString(startup.imageSourceUrl) || resolveStartupImageUrl(startup);
+  const localIconPath = asTrimmedString(startup.localIconPath);
+  const iconUrl = hasCachedStartupIcon(localIconPath)
+    ? getStartupIconPublicUrl(localIconPath)
+    : "";
 
-  if (!startupId || !name) {
+  if (!startupId || isAnonymousStartupName(name)) {
     return null;
   }
 
   return {
     id: startupId,
     name,
+    imageSourceUrl,
+    localIconPath,
     iconUrl,
     growth30d: asFiniteNumber(startup.growth30d),
   };
@@ -619,6 +688,93 @@ const buildPlayableSubset = (items, targetSize) => {
   return output;
 };
 
+const hydrateCachedStartupIcons = (items) =>
+  items.map((item) => {
+    const localIconPath = asTrimmedString(item.localIconPath);
+    return {
+      ...item,
+      localIconPath,
+      iconUrl: hasCachedStartupIcon(localIconPath) ? getStartupIconPublicUrl(localIconPath) : "",
+    };
+  });
+
+const cacheStartupIcon = async (startup) => {
+  const imageSourceUrl = asTrimmedString(startup.imageSourceUrl);
+  if (!imageSourceUrl) {
+    return startup;
+  }
+
+  if (hasCachedStartupIcon(startup.localIconPath)) {
+    return {
+      ...startup,
+      iconUrl: getStartupIconPublicUrl(startup.localIconPath),
+    };
+  }
+
+  const response = await fetch(imageSourceUrl, {
+    headers: {
+      Accept: "image/*",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Image ${response.status}: ${imageSourceUrl}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().startsWith("image/")) {
+    throw new Error(`Unsupported image content type: ${contentType || "unknown"}`);
+  }
+
+  const extension = resolveImageExtension(contentType, imageSourceUrl);
+  const fileStem = toSafeFileStem(startup.id);
+  const fingerprint = crypto.createHash("sha1").update(imageSourceUrl).digest("hex").slice(0, 8);
+  const filename = `${fileStem}-${fingerprint}${extension}`;
+  const filePath = getStartupIconDiskPath(filename);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  ensureParentDir(filePath);
+  writeFileSync(filePath, bytes);
+
+  return {
+    ...startup,
+    localIconPath: filename,
+    iconUrl: getStartupIconPublicUrl(filename),
+  };
+};
+
+const cacheStartupIcons = async (items, maxDownloads) => {
+  const output = [];
+  let downloadsUsed = 0;
+
+  for (const item of items) {
+    if (hasCachedStartupIcon(item.localIconPath) || !item.imageSourceUrl || downloadsUsed >= maxDownloads) {
+      output.push({
+        ...item,
+        iconUrl: hasCachedStartupIcon(item.localIconPath)
+          ? getStartupIconPublicUrl(item.localIconPath)
+          : "",
+      });
+      continue;
+    }
+
+    try {
+      const cached = await cacheStartupIcon(item);
+      output.push(cached);
+      downloadsUsed += 1;
+    } catch (error) {
+      console.warn(`[startup-coins] failed to cache icon for ${item.name}.`, error);
+      output.push({
+        ...item,
+        localIconPath: "",
+        iconUrl: "",
+      });
+      downloadsUsed += 1;
+    }
+  }
+
+  return output;
+};
+
 const persistStartupCatalog = () => {
   try {
     ensureParentDir(STARTUP_CACHE_FILE_PATH);
@@ -652,7 +808,9 @@ const hydrateStartupCatalogFromDisk = () => {
     const normalizedItems = sourceItems
       .map((item, index) => normalizeStartup(item, index))
       .filter(Boolean);
-    const playableSubset = buildPlayableSubset(normalizedItems, STARTUP_TARGET_POOL_SIZE);
+    const playableSubset = hydrateCachedStartupIcons(
+      buildPlayableSubset(normalizedItems, STARTUP_TARGET_POOL_SIZE),
+    );
     if (playableSubset.length === 0) {
       return false;
     }
@@ -669,9 +827,11 @@ const hydrateStartupCatalogFromDisk = () => {
 };
 
 if (!hydrateStartupCatalogFromDisk() && !isProduction) {
-  startupCatalog.items = buildPlayableSubset(
-    DEV_STARTUP_FALLBACKS,
-    Math.min(DEV_STARTUP_FALLBACKS.length, STARTUP_TARGET_POOL_SIZE),
+  startupCatalog.items = hydrateCachedStartupIcons(
+    buildPlayableSubset(
+      DEV_STARTUP_FALLBACKS,
+      Math.min(DEV_STARTUP_FALLBACKS.length, STARTUP_TARGET_POOL_SIZE),
+    ),
   );
   startupCatalog.lastSyncedAtMs = Date.now();
   startupCatalog.requestCount = 0;
@@ -717,9 +877,11 @@ const syncStartupCatalog = async () => {
     if (!apiKey) {
       if (!isProduction) {
         if (startupCatalog.items.length === 0) {
-          startupCatalog.items = buildPlayableSubset(
-            DEV_STARTUP_FALLBACKS,
-            Math.min(DEV_STARTUP_FALLBACKS.length, STARTUP_TARGET_POOL_SIZE),
+          startupCatalog.items = hydrateCachedStartupIcons(
+            buildPlayableSubset(
+              DEV_STARTUP_FALLBACKS,
+              Math.min(DEV_STARTUP_FALLBACKS.length, STARTUP_TARGET_POOL_SIZE),
+            ),
           );
           startupCatalog.lastSyncedAtMs = Date.now();
           startupCatalog.requestCount = 0;
@@ -759,21 +921,44 @@ const syncStartupCatalog = async () => {
       throw new Error("TrustMRR returned no usable startups within sync budget.");
     }
 
-    startupCatalog.items = playableSubset;
+    const previousById = new Map(startupCatalog.items.map((item) => [item.id, item]));
+    const hydratedSubset = playableSubset.map((item) => {
+      const previous = previousById.get(item.id);
+      if (
+        previous &&
+        previous.imageSourceUrl === item.imageSourceUrl &&
+        hasCachedStartupIcon(previous.localIconPath)
+      ) {
+        return {
+          ...item,
+          localIconPath: previous.localIconPath,
+          iconUrl: getStartupIconPublicUrl(previous.localIconPath),
+        };
+      }
+      return item;
+    });
+    const iconReadySubset = await cacheStartupIcons(
+      hydratedSubset,
+      STARTUP_ICON_SYNC_MAX_DOWNLOADS,
+    );
+
+    startupCatalog.items = iconReadySubset;
     startupCatalog.lastSyncedAtMs = Date.now();
     startupCatalog.requestCount = requestCount;
     startupCatalog.source = "api";
     persistStartupCatalog();
     console.log(
-      `[startup-coins] synced ${playableSubset.length} startups from TrustMRR using ${requestCount} requests.`,
+      `[startup-coins] synced ${iconReadySubset.length} startups from TrustMRR using ${requestCount} requests.`,
     );
-    return playableSubset;
+    return iconReadySubset;
   })()
     .catch((error) => {
       if (!isProduction && startupCatalog.items.length === 0) {
-        startupCatalog.items = buildPlayableSubset(
-          DEV_STARTUP_FALLBACKS,
-          Math.min(DEV_STARTUP_FALLBACKS.length, STARTUP_TARGET_POOL_SIZE),
+        startupCatalog.items = hydrateCachedStartupIcons(
+          buildPlayableSubset(
+            DEV_STARTUP_FALLBACKS,
+            Math.min(DEV_STARTUP_FALLBACKS.length, STARTUP_TARGET_POOL_SIZE),
+          ),
         );
         startupCatalog.lastSyncedAtMs = Date.now();
         startupCatalog.requestCount = 0;
@@ -1538,6 +1723,19 @@ class WorldRoom extends Room {
 }
 
 const httpServer = createServer((req, res) => {
+  if (req.url) {
+    const url = new URL(req.url, "http://localhost");
+    if (url.pathname.startsWith(STARTUP_ICON_ROUTE_PREFIX)) {
+      const filename = path.basename(url.pathname.slice(STARTUP_ICON_ROUTE_PREFIX.length));
+      if (!filename) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("Not found.");
+        return;
+      }
+      serveStaticFile(res, getStartupIconDiskPath(filename));
+      return;
+    }
+  }
   serveDist(req, res);
 });
 const gameServer = new Server({ server: httpServer });
