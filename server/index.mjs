@@ -117,6 +117,13 @@ const STARTUP_TARGET_POOL_SIZE = Math.max(
 const TRUSTMRR_API_BASE_URL =
   process.env.TRUSTMRR_API_BASE_URL?.trim() || "https://trustmrr.com/api/v1";
 const TRUSTMRR_STARTUPS_ENDPOINT = `${TRUSTMRR_API_BASE_URL.replace(/\/+$/, "")}/startups`;
+const TRUSTMRR_SITE_ORIGIN = (() => {
+  try {
+    return new URL(TRUSTMRR_API_BASE_URL).origin;
+  } catch {
+    return "https://trustmrr.com";
+  }
+})();
 const TRUSTMRR_PAGE_LIMIT = 50;
 const STARTUP_CACHE_FILE_PATH =
   process.env.TRUSTMRR_CACHE_FILE_PATH?.trim() || DEFAULT_STARTUP_CACHE_PATH;
@@ -177,7 +184,24 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const asFiniteNumber = (value, fallback = 0) =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 const asTrimmedString = (value) => (typeof value === "string" ? value.trim() : "");
-const isProduction = process.env.NODE_ENV === "production";
+const resolveAppEnv = () => {
+  const explicit = asTrimmedString(process.env.APP_ENV).toLowerCase();
+  if (explicit === "production" || explicit === "prod") {
+    return "production";
+  }
+  if (explicit === "development" || explicit === "dev" || explicit === "local") {
+    return "development";
+  }
+
+  const nodeEnv = asTrimmedString(process.env.NODE_ENV).toLowerCase();
+  if (nodeEnv === "production") {
+    return "production";
+  }
+
+  return "development";
+};
+const APP_ENV = resolveAppEnv();
+const isProduction = APP_ENV === "production";
 const ensureParentDir = (filePath) => {
   mkdirSync(path.dirname(filePath), { recursive: true });
 };
@@ -458,6 +482,45 @@ const lakeDepthAt = (x, z) => {
 
 const terrainHeightAt = (x, z) => baseTerrainHeightAt(x, z) - lakeDepthAt(x, z);
 
+const toAbsoluteImageUrl = (value) => {
+  const candidate = asTrimmedString(value);
+  if (!candidate) {
+    return "";
+  }
+
+  try {
+    const absolute = new URL(candidate, TRUSTMRR_SITE_ORIGIN);
+    if (absolute.protocol !== "http:" && absolute.protocol !== "https:") {
+      return "";
+    }
+    return absolute.toString();
+  } catch {
+    return "";
+  }
+};
+
+const resolveStartupImageUrl = (startup) => {
+  const candidates = [
+    startup.icon,
+    startup.iconUrl,
+    startup.logo,
+    startup.logoUrl,
+    startup.image,
+    startup.imageUrl,
+    startup.avatar,
+    startup.avatarUrl,
+  ];
+
+  for (const candidate of candidates) {
+    const resolved = toAbsoluteImageUrl(candidate);
+    if (resolved) {
+      return resolved;
+    }
+  }
+
+  return "";
+};
+
 const normalizeStartup = (raw, index) => {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -470,11 +533,7 @@ const normalizeStartup = (raw, index) => {
     asTrimmedString(startup.name) ||
     `startup-${index}`;
   const name = asTrimmedString(startup.name) || startupId;
-  const iconUrl =
-    asTrimmedString(startup.icon) ||
-    asTrimmedString(startup.iconUrl) ||
-    asTrimmedString(startup.logo) ||
-    "";
+  const iconUrl = resolveStartupImageUrl(startup);
 
   if (!startupId || !name) {
     return null;

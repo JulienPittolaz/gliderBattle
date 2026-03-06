@@ -111,3 +111,33 @@ Example local split setup (Vite frontend + Colyseus backend on port `2567`):
 ```env
 VITE_COLYSEUS_URL=ws://localhost:2567
 ```
+
+## Server Environment Mode
+
+The Node server uses `APP_ENV` to decide whether it is running in development or production mode.
+
+Precedence:
+
+1. `APP_ENV`
+2. `NODE_ENV`
+3. fallback to development
+
+Accepted values for `APP_ENV`:
+
+- `production` or `prod`
+- `development`, `dev`, or `local`
+
+Examples:
+
+```env
+APP_ENV=development
+```
+
+```env
+APP_ENV=production
+```
+
+Notes:
+
+- Development mode enables the local startup fallback catalog when TrustMRR is unavailable.
+- Production mode disables that fallback and expects real TrustMRR data or a valid persisted cache.
