@@ -16,6 +16,8 @@ import type {
 const ROOM_NAME = 'world'
 const SEND_INTERVAL_MS = 50
 const LOCAL_COLYSEUS_PORT = '2567'
+const PLAYER_ID_STORAGE_KEY = 'gliderBattle.playerId'
+const PLAYER_NICKNAME_STORAGE_KEY = 'gliderBattle.nickname'
 
 const asNumber = (value: unknown, fallback = 0) =>
   typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -199,20 +201,39 @@ const toCoins = (state: unknown): StartupCoinSnapshot[] => {
   return output
 }
 
-const toLeaderboard = (players: PlayerSnapshot[]): LeaderboardEntry[] =>
-  [...players]
-    .sort((a, b) => {
-      if (b.bestOrbScore !== a.bestOrbScore) {
-        return b.bestOrbScore - a.bestOrbScore
-      }
-      return a.nickname.localeCompare(b.nickname)
+const toLeaderboard = (state: unknown): LeaderboardEntry[] => {
+  if (!state || typeof state !== 'object') {
+    return []
+  }
+
+  const source = (state as { leaderboard?: unknown }).leaderboard
+  if (!source || typeof source !== 'object') {
+    return []
+  }
+
+  const values = Array.isArray(source)
+    ? source
+    : Array.from((source as { values?: () => Iterable<unknown> }).values?.() ?? [])
+
+  const output: LeaderboardEntry[] = []
+  for (const entry of values) {
+    if (!entry || typeof entry !== 'object') {
+      continue
+    }
+    const value = entry as Record<string, unknown>
+    const sessionId = typeof value.sessionId === 'string' ? value.sessionId : ''
+    if (!sessionId) {
+      continue
+    }
+    output.push({
+      sessionId,
+      nickname: typeof value.nickname === 'string' ? value.nickname : `Pilot-${sessionId.slice(0, 4)}`,
+      score: asNumber(value.score),
     })
-    .slice(0, 3)
-    .map((player) => ({
-      sessionId: player.sessionId,
-      nickname: player.nickname,
-      score: player.bestOrbScore,
-    }))
+  }
+
+  return output
+}
 
 const toOrbActive = (state: unknown): boolean => {
   if (!state || typeof state !== 'object') {
@@ -229,6 +250,36 @@ const toOrbCountdownRemainingMs = (state: unknown): number => {
 }
 
 const randomNickname = () => `Pilot-${Math.floor(Math.random() * 9000 + 1000)}`
+
+const createPlayerId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '')
+  }
+  return `player${Math.random().toString(36).slice(2, 14)}${Date.now().toString(36)}`
+}
+
+const getPersistentPlayerIdentity = () => {
+  try {
+    let playerId = window.localStorage.getItem(PLAYER_ID_STORAGE_KEY)?.trim() ?? ''
+    if (!/^[a-zA-Z0-9_-]{8,80}$/.test(playerId)) {
+      playerId = createPlayerId()
+      window.localStorage.setItem(PLAYER_ID_STORAGE_KEY, playerId)
+    }
+
+    let nickname = window.localStorage.getItem(PLAYER_NICKNAME_STORAGE_KEY)?.trim() ?? ''
+    if (!nickname) {
+      nickname = randomNickname()
+      window.localStorage.setItem(PLAYER_NICKNAME_STORAGE_KEY, nickname)
+    }
+
+    return { playerId, nickname: nickname.slice(0, 24) }
+  } catch {
+    return {
+      playerId: createPlayerId(),
+      nickname: randomNickname(),
+    }
+  }
+}
 
 const getSameOriginEndpoint = () => {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -285,11 +336,13 @@ export const useMultiplayerSession = () => {
     let cancelled = false
     const endpoint = resolveColyseusEndpoint()
     const client = new Client(endpoint)
+    const identity = getPersistentPlayerIdentity()
 
     const connect = async () => {
       try {
         const room = await client.joinOrCreate(ROOM_NAME, {
-          nickname: randomNickname(),
+          nickname: identity.nickname,
+          playerId: identity.playerId,
         })
         if (cancelled) {
           room.leave()
@@ -318,7 +371,7 @@ export const useMultiplayerSession = () => {
             coins: toCoins(state),
             orbActive: toOrbActive(state),
             orbCountdownRemainingMs: toOrbCountdownRemainingMs(state),
-            leaderboard: toLeaderboard(players),
+            leaderboard: toLeaderboard(state),
           })
         })
 

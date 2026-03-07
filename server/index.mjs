@@ -14,6 +14,7 @@ const DIST_DIR = path.resolve(__dirname, "../dist");
 const ENV_FILE_PATH = path.resolve(__dirname, "../.env");
 const DEFAULT_STARTUP_CACHE_PATH = path.resolve(__dirname, "./startup-cache.json");
 const DEFAULT_STARTUP_ICON_CACHE_DIR = path.resolve(__dirname, "./startup-icons");
+const DEFAULT_SCOREBOARD_CACHE_PATH = path.resolve(__dirname, "./scoreboard.json");
 
 const loadEnvFile = (filePath) => {
   if (!existsSync(filePath)) {
@@ -138,6 +139,9 @@ const STARTUP_ICON_SYNC_MAX_DOWNLOADS = Math.max(
 );
 const STARTUP_RECENT_HISTORY_SIZE = 18;
 const STARTUP_MIN_GAMEPLAY_GROWTH_PCT = 3;
+const LEADERBOARD_SIZE = 3;
+const SCOREBOARD_CACHE_FILE_PATH =
+  process.env.SCOREBOARD_CACHE_FILE_PATH?.trim() || DEFAULT_SCOREBOARD_CACHE_PATH;
 
 const TERRAIN_SEED = 1337;
 const TERRAIN_ISLAND_RADIUS = 95;
@@ -189,6 +193,10 @@ const startupCatalog = {
   source: "empty",
   refreshPromise: null,
   recentlyUsedIds: [],
+};
+
+const persistentScores = {
+  playersById: new Map(),
 };
 
 const DEV_STARTUP_FALLBACKS = [
@@ -1065,9 +1073,84 @@ const shouldRefreshStartupCatalog = (now = Date.now()) =>
   startupCatalog.lastSyncedAtMs <= 0 ||
   now - startupCatalog.lastSyncedAtMs >= SAFE_STARTUP_REFRESH_INTERVAL_MS;
 
+const sanitizeNickname = (value, fallback = "Guest") => {
+  const nickname = asTrimmedString(value).slice(0, 24);
+  return nickname || fallback;
+};
+
+const sanitizePlayerId = (value) => {
+  const playerId = asTrimmedString(value).slice(0, 80);
+  return /^[a-zA-Z0-9_-]{8,80}$/.test(playerId) ? playerId : "";
+};
+
+const getPersistentLeaderboardEntries = () =>
+  Array.from(persistentScores.playersById.values())
+    .filter((entry) => Number.isFinite(entry.bestOrbScore) && entry.bestOrbScore > 0)
+    .sort((a, b) => {
+      if (b.bestOrbScore !== a.bestOrbScore) {
+        return b.bestOrbScore - a.bestOrbScore;
+      }
+      if (b.updatedAtMs !== a.updatedAtMs) {
+        return b.updatedAtMs - a.updatedAtMs;
+      }
+      return a.nickname.localeCompare(b.nickname);
+    })
+    .slice(0, LEADERBOARD_SIZE);
+
+const persistScoreboard = () => {
+  try {
+    ensureParentDir(SCOREBOARD_CACHE_FILE_PATH);
+    writeFileSync(
+      SCOREBOARD_CACHE_FILE_PATH,
+      JSON.stringify(
+        {
+          players: Array.from(persistentScores.playersById.values()),
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+  } catch (error) {
+    console.warn("[scores] failed to persist scoreboard.", error);
+  }
+};
+
+const hydrateScoreboardFromDisk = () => {
+  if (!existsSync(SCOREBOARD_CACHE_FILE_PATH)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(readFileSync(SCOREBOARD_CACHE_FILE_PATH, "utf8"));
+    const players = Array.isArray(parsed?.players) ? parsed.players : [];
+    persistentScores.playersById.clear();
+    for (const entry of players) {
+      const playerId = sanitizePlayerId(entry?.playerId);
+      if (!playerId) {
+        continue;
+      }
+      persistentScores.playersById.set(playerId, {
+        playerId,
+        nickname: sanitizeNickname(entry?.nickname, `Pilot-${playerId.slice(0, 4)}`),
+        bestOrbScore: Math.max(0, Math.floor(asFiniteNumber(entry?.bestOrbScore, 0))),
+        createdAtMs: Math.max(0, Math.floor(asFiniteNumber(entry?.createdAtMs, Date.now()))),
+        updatedAtMs: Math.max(0, Math.floor(asFiniteNumber(entry?.updatedAtMs, Date.now()))),
+      });
+    }
+    return true;
+  } catch (error) {
+    console.warn("[scores] failed to hydrate scoreboard cache.", error);
+    return false;
+  }
+};
+
+hydrateScoreboardFromDisk();
+
 class NetPlayer extends Schema {
   constructor() {
     super();
+    this.playerId = "";
     this.nickname = "";
     this.x = 0;
     this.y = SPAWN_Y;
@@ -1089,6 +1172,7 @@ class NetPlayer extends Schema {
 }
 
 defineTypes(NetPlayer, {
+  playerId: "string",
   nickname: "string",
   x: "number",
   y: "number",
@@ -1106,6 +1190,21 @@ defineTypes(NetPlayer, {
   lastCoinPickupSeq: "number",
   lastCoinPickupStartupName: "string",
   updatedAtMs: "number",
+});
+
+class NetLeaderboardEntry extends Schema {
+  constructor() {
+    super();
+    this.sessionId = "";
+    this.nickname = "";
+    this.score = 0;
+  }
+}
+
+defineTypes(NetLeaderboardEntry, {
+  sessionId: "string",
+  nickname: "string",
+  score: "number",
 });
 
 class NetOrb extends Schema {
@@ -1196,6 +1295,7 @@ class WorldState extends Schema {
     this.thermals = new ArraySchema();
     this.orb = new NetOrb();
     this.coins = new ArraySchema();
+    this.leaderboard = new ArraySchema();
     this.orbActive = false;
     this.orbCountdownRemainingMs = 0;
     this.worldSeed = 5000;
@@ -1208,11 +1308,66 @@ defineTypes(WorldState, {
   thermals: [NetThermal],
   orb: NetOrb,
   coins: [NetStartupCoin],
+  leaderboard: [NetLeaderboardEntry],
   orbActive: "boolean",
   orbCountdownRemainingMs: "number",
   worldSeed: "number",
   serverTimeMs: "number",
 });
+
+const activeWorldRooms = new Set();
+
+const syncPersistentLeaderboardToRoom = (room) => {
+  if (!room?.state?.leaderboard) {
+    return;
+  }
+
+  const entries = getPersistentLeaderboardEntries();
+  room.state.leaderboard.clear();
+  for (const entry of entries) {
+    const netEntry = new NetLeaderboardEntry();
+    netEntry.sessionId = entry.playerId;
+    netEntry.nickname = entry.nickname;
+    netEntry.score = entry.bestOrbScore;
+    room.state.leaderboard.push(netEntry);
+  }
+};
+
+const syncPersistentLeaderboardToRooms = () => {
+  for (const room of activeWorldRooms) {
+    syncPersistentLeaderboardToRoom(room);
+  }
+};
+
+const upsertPersistentPlayerScore = (playerId, nickname, bestOrbScore) => {
+  const normalizedPlayerId = sanitizePlayerId(playerId);
+  if (!normalizedPlayerId) {
+    return;
+  }
+
+  const now = Date.now();
+  const normalizedNickname = sanitizeNickname(nickname, `Pilot-${normalizedPlayerId.slice(0, 4)}`);
+  const nextBestScore = Math.max(0, Math.floor(asFiniteNumber(bestOrbScore, 0)));
+  const existing = persistentScores.playersById.get(normalizedPlayerId);
+  const shouldPersist =
+    !existing ||
+    nextBestScore > existing.bestOrbScore ||
+    normalizedNickname !== existing.nickname;
+
+  if (!shouldPersist) {
+    return;
+  }
+
+  persistentScores.playersById.set(normalizedPlayerId, {
+    playerId: normalizedPlayerId,
+    nickname: normalizedNickname,
+    bestOrbScore: existing ? Math.max(existing.bestOrbScore, nextBestScore) : nextBestScore,
+    createdAtMs: existing?.createdAtMs ?? now,
+    updatedAtMs: now,
+  });
+  persistScoreboard();
+  syncPersistentLeaderboardToRooms();
+};
 
 const canTag = (ax, ay, az, bx, by, bz, horizontalRadius, verticalTolerance) => {
   const dx = ax - bx;
@@ -1632,6 +1787,8 @@ class WorldRoom extends Room {
     this.maxClients = MAX_CLIENTS;
     this.setPatchRate(SERVER_TICK_MS);
     this.setState(new WorldState());
+    activeWorldRooms.add(this);
+    syncPersistentLeaderboardToRoom(this);
     this.scoreAccumulatorMs = 0;
     this.orbCountdownEndsAtMs = null;
     this.nextCoinSpawnAtMs = Date.now() + COIN_SPAWN_INTERVAL_MS;
@@ -1756,6 +1913,9 @@ class WorldRoom extends Room {
           if (holder) {
             holder.currentOrbScore += 1;
             holder.bestOrbScore = Math.max(holder.bestOrbScore, holder.currentOrbScore);
+            if (holder.playerId) {
+              upsertPersistentPlayerScore(holder.playerId, holder.nickname, holder.bestOrbScore);
+            }
           }
         }
         this.scoreAccumulatorMs -= ORB_SCORE_INTERVAL_MS;
@@ -1776,20 +1936,24 @@ class WorldRoom extends Room {
   }
 
   onJoin(client, options) {
-    const nickname =
-      typeof options?.nickname === "string" && options.nickname.trim().length > 0
-        ? options.nickname.trim().slice(0, 24)
-        : `Pilot-${client.sessionId.slice(0, 4)}`;
+    const playerId = sanitizePlayerId(options?.playerId);
+    const fallbackNickname = `Pilot-${(playerId || client.sessionId).slice(0, 4)}`;
+    const nickname = sanitizeNickname(options?.nickname, fallbackNickname);
+    const persistedPlayer = playerId ? persistentScores.playersById.get(playerId) : null;
 
     const player = new NetPlayer();
+    player.playerId = playerId;
     player.nickname = nickname;
     player.currentOrbScore = 0;
-    player.bestOrbScore = 0;
+    player.bestOrbScore = persistedPlayer?.bestOrbScore ?? 0;
     const angle = Math.random() * Math.PI * 2;
     player.x = Math.cos(angle) * SPAWN_RING_RADIUS;
     player.z = Math.sin(angle) * SPAWN_RING_RADIUS;
     player.yaw = Math.atan2(player.x, player.z);
     this.state.players.set(client.sessionId, player);
+    if (playerId) {
+      upsertPersistentPlayerScore(playerId, nickname, player.bestOrbScore);
+    }
     this.updateOrbLifecycle(Date.now());
   }
 
@@ -1802,6 +1966,10 @@ class WorldRoom extends Room {
       this.clearCoins(Date.now());
     }
     this.updateOrbLifecycle(Date.now());
+  }
+
+  onDispose() {
+    activeWorldRooms.delete(this);
   }
 }
 
